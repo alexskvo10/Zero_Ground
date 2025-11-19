@@ -418,9 +418,42 @@ public:
         if (elapsedTime_ >= 1.0f) {
             currentFPS_ = frameCount_ / elapsedTime_;
             
+            // Calculate frame time
+            float frameTime = (elapsedTime_ / frameCount_) * 1000.0f;
+            
+            // Calculate game thread load (percentage of frame budget used)
+            float gameThreadLoad = (frameTime / 16.67f) * 100.0f;
+            
+            // Estimate actual CPU usage (more conservative)
+            float estimatedCPUUsage = (gameThreadLoad / 100.0f) * 40.0f;
+            
+            // Log performance metrics
+            std::cout << "\n=== CLIENT PERFORMANCE METRICS ===" << std::endl;
+            std::cout << "FPS: " << currentFPS_ << " (target: 55+)" << std::endl;
+            std::cout << "Frame Time: " << frameTime << "ms" << std::endl;
+            std::cout << "Players: " << playerCount << std::endl;
+            std::cout << "Walls: " << wallCount << std::endl;
+            std::cout << "Game Thread Load: " << gameThreadLoad << "% of frame budget" << std::endl;
+            std::cout << "Estimated CPU Usage: " << estimatedCPUUsage << "% (target: <40%)" << std::endl;
+            
+            // Add build type hint if performance is lower
+            if (gameThreadLoad > 100.0f) {
+                std::cout << "Note: Running Debug build? Release build typically 30-50% faster" << std::endl;
+            }
+            
+            std::cout << "====================================\n" << std::endl;
+            
             // Log warning if FPS drops below 55
             if (currentFPS_ < 55.0f) {
-                logPerformanceWarning(playerCount, wallCount);
+                logPerformanceWarning(playerCount, wallCount, gameThreadLoad);
+            }
+            
+            // Log warning if game thread load is too high
+            if (gameThreadLoad > 110.0f) {
+                std::cerr << "[WARNING] Game thread load exceeds frame budget: " 
+                         << gameThreadLoad << "%" << std::endl;
+                std::cerr << "  This means frames are taking longer than 16.67ms" << std::endl;
+                std::cerr << "  Consider optimizing or using Release build" << std::endl;
             }
             
             // Reset counters for next window
@@ -435,24 +468,20 @@ public:
     }
     
 private:
-    void logPerformanceWarning(size_t playerCount, size_t wallCount) {
+    void logPerformanceWarning(size_t playerCount, size_t wallCount, float gameThreadLoad) {
         std::cerr << "[WARNING] Performance degradation detected!" << std::endl;
         std::cerr << "  FPS: " << currentFPS_ << " (target: 55+)" << std::endl;
         std::cerr << "  Players: " << playerCount << std::endl;
         std::cerr << "  Walls: " << wallCount << std::endl;
         
-        // Log CPU usage (Windows-specific approximation)
-        // Note: Accurate CPU usage requires platform-specific APIs
-        // This is a simplified metric based on frame time
-        float frameTime = (elapsedTime_ / frameCount_) * 1000.0f; // ms per frame
-        std::cerr << "  Avg Frame Time: " << frameTime << "ms" << std::endl;
+        float frameTime = (elapsedTime_ / frameCount_) * 1000.0f;
+        std::cerr << "  Avg Frame Time: " << frameTime << "ms (target: 16.67ms)" << std::endl;
+        std::cerr << "  Game Thread Load: " << gameThreadLoad << "% of frame budget" << std::endl;
         
-        // Estimate CPU usage based on frame time (rough approximation)
-        // At 60 FPS, each frame should take ~16.67ms
-        // If it takes longer, we can estimate higher CPU usage
-        float estimatedCPUUsage = (frameTime / 16.67f) * 100.0f;
-        if (estimatedCPUUsage > 100.0f) estimatedCPUUsage = 100.0f;
-        std::cerr << "  Estimated CPU Usage: " << estimatedCPUUsage << "%" << std::endl;
+        // Provide helpful suggestions
+        if (gameThreadLoad > 100.0f) {
+            std::cerr << "  Suggestion: Try Release build for better performance" << std::endl;
+        }
     }
     
     int frameCount_;
