@@ -13,8 +13,12 @@
 #include <queue>
 #include <cmath>
 #include <ctime>
+#include <atomic>
 
 enum class ServerState { StartScreen, MainScreen };
+
+// Global server state (atomic for thread safety)
+std::atomic<ServerState> serverState(ServerState::StartScreen);
 
 // ========================
 // Basic Data Structures
@@ -671,6 +675,7 @@ private:
 // ========================
 
 const float MOVEMENT_SPEED = 5.0f; // 5 units per second
+const float VISIBILITY_RADIUS = 25.0f; // 25 units visibility radius
 
 // Linear interpolation function for smooth position transitions
 float lerp(float start, float end, float alpha) {
@@ -679,6 +684,113 @@ float lerp(float start, float end, float alpha) {
 
 sf::Vector2f lerpPosition(sf::Vector2f start, sf::Vector2f end, float alpha) {
     return sf::Vector2f(lerp(start.x, end.x, alpha), lerp(start.y, end.y, alpha));
+}
+
+// ========================
+// Fog of War System
+// ========================
+
+// Calculate distance between two points
+float getDistance(sf::Vector2f a, sf::Vector2f b) {
+    float dx = a.x - b.x;
+    float dy = a.y - b.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+// Check if a point is within visibility radius
+bool isVisible(sf::Vector2f playerPos, sf::Vector2f targetPos, float radius) {
+    return getDistance(playerPos, targetPos) <= radius;
+}
+
+// Render fog of war effect
+void renderFogOfWar(sf::RenderWindow& window, sf::Vector2f playerPos, 
+                    const std::vector<Wall>& walls, 
+                    const std::map<sf::IpAddress, sf::CircleShape>& clientCircles,
+                    const std::map<sf::IpAddress, Position>& clients,
+                    float scaleX, float scaleY) {
+    
+    // Draw all walls with fog effect
+    for (const auto& wall : walls) {
+        sf::RectangleShape wallShape(sf::Vector2f(wall.width * scaleX, wall.height * scaleY));
+        wallShape.setPosition(wall.x * scaleX, wall.y * scaleY);
+        
+        // Calculate distance from player to wall center
+        sf::Vector2f wallCenter(wall.x + wall.width / 2.0f, wall.y + wall.height / 2.0f);
+        float distance = getDistance(playerPos, wallCenter);
+        
+        // Apply darkening effect if outside visibility radius
+        if (distance > VISIBILITY_RADIUS) {
+            wallShape.setFillColor(sf::Color(100, 100, 100)); // Darkened gray
+        } else {
+            wallShape.setFillColor(sf::Color(150, 150, 150)); // Normal gray
+        }
+        
+        wallShape.setOutlineColor(sf::Color(100, 100, 100));
+        wallShape.setOutlineThickness(1.0f);
+        window.draw(wallShape);
+    }
+    
+    // Draw client players only if within visibility radius
+    for (const auto& pair : clients) {
+        sf::IpAddress ip = pair.first;
+        Position pos = pair.second;
+        
+        if (isVisible(playerPos, sf::Vector2f(pos.x, pos.y), VISIBILITY_RADIUS)) {
+            // Find the circle shape for this client
+            auto it = clientCircles.find(ip);
+            if (it != clientCircles.end()) {
+                window.draw(it->second);
+            }
+        }
+    }
+}
+
+// Apply fog overlay with circular cutout around player
+void applyFogOverlay(sf::RenderWindow& window, sf::Vector2f playerScreenPos, float scaleX, float scaleY) {
+    sf::Vector2u windowSize = window.getSize();
+    
+    // Create vertex array for fog overlay with circular cutout
+    // We'll use a simple approach: draw multiple rectangles to simulate fog
+    // For a more sophisticated approach, a shader would be ideal
+    
+    const int segments = 32; // Number of segments for circular approximation
+    const float visibilityRadiusScreen = VISIBILITY_RADIUS * std::min(scaleX, scaleY);
+    
+    // Create a render texture for the fog mask
+    sf::RenderTexture fogTexture;
+    if (!fogTexture.create(windowSize.x, windowSize.y)) {
+        std::cerr << "[ERROR] Failed to create fog render texture" << std::endl;
+        return;
+    }
+    
+    // Clear with transparent
+    fogTexture.clear(sf::Color::Transparent);
+    
+    // Draw full-screen fog
+    sf::RectangleShape fullFog(sf::Vector2f(windowSize.x, windowSize.y));
+    fullFog.setFillColor(sf::Color(0, 0, 0, 200)); // Black with alpha 200
+    fogTexture.draw(fullFog);
+    
+    // Draw clear circle around player using blend mode
+    sf::CircleShape clearCircle(visibilityRadiusScreen);
+    clearCircle.setOrigin(visibilityRadiusScreen, visibilityRadiusScreen);
+    clearCircle.setPosition(playerScreenPos);
+    clearCircle.setFillColor(sf::Color(0, 0, 0, 0)); // Fully transparent
+    
+    // Use subtract blend mode to create cutout
+    sf::RenderStates states;
+    states.blendMode = sf::BlendMode(
+        sf::BlendMode::Zero,           // Source factor
+        sf::BlendMode::One,            // Destination factor
+        sf::BlendMode::ReverseSubtract // Blend equation
+    );
+    
+    fogTexture.draw(clearCircle, states);
+    fogTexture.display();
+    
+    // Draw the fog texture to the window
+    sf::Sprite fogSprite(fogTexture.getTexture());
+    window.draw(fogSprite);
 }
 
 // ========================
@@ -747,6 +859,9 @@ private:
 std::mutex mutex;
 Position serverPos = { 25.0f, 475.0f }; // Server spawn position (bottom-left)
 Position serverPosPrevious = { 25.0f, 475.0f }; // Previous position for interpolation
+float serverHealth = 100.0f; // Server player health (0-100)
+int serverScore = 0; // Server player score
+bool serverIsAlive = true; // Server player alive status
 std::map<sf::IpAddress, Position> clients;
 GameMap gameMap;
 GameState gameState; // Thread-safe game state manager
@@ -761,7 +876,7 @@ struct ClientConnection {
 
 std::vector<ClientConnection> connectedClients;
 std::mutex clientsMutex;
-std::string connectionStatus = "Ожидание игрока..."; // Waiting for player... in Russian
+std::string connectionStatus = "Waiting for player..."; // Waiting for player... in Russian
 sf::Color connectionStatusColor = sf::Color::White;
 bool showPlayButton = false;
 
@@ -772,33 +887,65 @@ void readyListenerThread() {
     while (true) {
         std::vector<ClientConnection*> clientsToCheck;
         
-        // Get list of connected clients
+        // Get list of connected clients and clean up disconnected ones
         {
             std::lock_guard<std::mutex> lock(clientsMutex);
+            
+            // Remove disconnected clients
+            connectedClients.erase(
+                std::remove_if(connectedClients.begin(), connectedClients.end(),
+                    [](const ClientConnection& client) {
+                        if (!client.socket) {
+                            ErrorHandler::logInfo("Removing client with null socket");
+                            return true;
+                        }
+                        return false;
+                    }),
+                connectedClients.end()
+            );
+            
             for (auto& client : connectedClients) {
                 if (!client.isReady && client.socket) {
                     clientsToCheck.push_back(&client);
                 }
+            }
+            
+            // Log client status periodically
+            static sf::Clock logClock;
+            if (logClock.getElapsedTime().asSeconds() > 5.0f && !connectedClients.empty()) {
+                ErrorHandler::logInfo("Ready listener status: " + std::to_string(connectedClients.size()) + 
+                                     " total clients, " + std::to_string(clientsToCheck.size()) + " waiting for ready");
+                logClock.restart();
             }
         }
         
         // Check each client for ready packet
         for (auto* client : clientsToCheck) {
             if (client->socket) {
+                // Save original blocking mode
+                bool wasBlocking = client->socket->isBlocking();
                 client->socket->setBlocking(false);
                 
                 ReadyPacket readyPacket;
                 std::size_t received = 0;
                 sf::Socket::Status status = client->socket->receive(&readyPacket, sizeof(ReadyPacket), received);
                 
+                // Restore original blocking mode
+                client->socket->setBlocking(wasBlocking);
+                
                 if (status == sf::Socket::Done && received == sizeof(ReadyPacket)) {
                     if (readyPacket.type == MessageType::CLIENT_READY && readyPacket.isReady) {
                         ErrorHandler::logInfo("Client " + client->address.toString() + " is ready");
+                        
+                        bool serverInGame = false;
                         
                         // Update client ready status
                         {
                             std::lock_guard<std::mutex> lock(clientsMutex);
                             client->isReady = true;
+                            
+                            // Check if server is already in game
+                            serverInGame = (serverState.load() == ServerState::MainScreen);
                             
                             // Update UI status
                             connectionStatus = "The player is connected and ready to play"; // Player connected and ready to play in Russian
@@ -806,6 +953,24 @@ void readyListenerThread() {
                             showPlayButton = true;
                             
                             ErrorHandler::logInfo("Updated UI to show player ready");
+                            
+                            // If server is already in game, send StartPacket immediately
+                            if (serverInGame) {
+                                ErrorHandler::logInfo("Server is already in game, sending StartPacket immediately");
+                                
+                                StartPacket startPacket;
+                                startPacket.type = MessageType::SERVER_START;
+                                startPacket.timestamp = static_cast<uint32_t>(std::time(nullptr));
+                                
+                                client->socket->setBlocking(true);
+                                sf::Socket::Status sendStatus = client->socket->send(&startPacket, sizeof(StartPacket));
+                                
+                                if (sendStatus == sf::Socket::Done) {
+                                    ErrorHandler::logInfo("✓ Sent StartPacket to reconnected client " + client->address.toString());
+                                } else {
+                                    ErrorHandler::logTCPError("Send StartPacket to reconnected client", sendStatus, client->address.toString());
+                                }
+                            }
                         }
                         
                         // Update GameState
@@ -820,6 +985,9 @@ void readyListenerThread() {
                     ErrorHandler::handleInvalidPacket(oss.str(), client->address.toString());
                 } else if (status == sf::Socket::Disconnected) {
                     ErrorHandler::handleConnectionLost(client->address.toString());
+                    // Mark socket as null so it will be removed in next iteration
+                    std::lock_guard<std::mutex> lock(clientsMutex);
+                    client->socket.reset();
                 } else if (status != sf::Socket::NotReady && status != sf::Socket::Done) {
                     ErrorHandler::logTCPError("Receive ReadyPacket", status, client->address.toString());
                 }
@@ -832,7 +1000,8 @@ void readyListenerThread() {
 
 // TCP listener thread to handle client connections
 void tcpListenerThread(sf::TcpListener* listener) {
-    ErrorHandler::logInfo("TCP listener thread started on port 53000");
+    ErrorHandler::logInfo("=== TCP Listener Thread Started ===");
+    ErrorHandler::logInfo("Listening on port 53000 for incoming connections");
     
     while (true) {
         auto clientSocket = std::make_unique<sf::TcpSocket>();
@@ -840,15 +1009,18 @@ void tcpListenerThread(sf::TcpListener* listener) {
         sf::Socket::Status acceptStatus = listener->accept(*clientSocket);
         if (acceptStatus == sf::Socket::Done) {
             std::string clientIP = clientSocket->getRemoteAddress().toString();
-            ErrorHandler::logInfo("New client connection from " + clientIP);
+            ErrorHandler::logInfo("=== New Client Connection Accepted ===");
+            ErrorHandler::logInfo("Client IP: " + clientIP);
             
             // Set socket to blocking mode for reliable TCP communication
             clientSocket->setBlocking(true);
             
             // Receive ConnectPacket
+            ErrorHandler::logInfo("Waiting for ConnectPacket from client...");
             ConnectPacket connectPacket;
             std::size_t received = 0;
             sf::Socket::Status receiveStatus = clientSocket->receive(&connectPacket, sizeof(ConnectPacket), received);
+            ErrorHandler::logInfo("Receive status: " + std::to_string(static_cast<int>(receiveStatus)) + ", received bytes: " + std::to_string(received));
             
             if (receiveStatus == sf::Socket::Done) {
                 if (received == sizeof(ConnectPacket)) {
@@ -1089,12 +1261,16 @@ int main() {
     }
     
     sf::TcpListener tcpListener;
+    ErrorHandler::logInfo("=== Starting TCP Server ===");
+    ErrorHandler::logInfo("Attempting to bind to port 53000...");
     sf::Socket::Status listenStatus = tcpListener.listen(53000);
     if (listenStatus != sf::Socket::Done) {
         ErrorHandler::logTCPError("Start TCP listener on port 53000", listenStatus);
         ErrorHandler::logNetworkError("TCP Server Startup", "Failed to bind to port 53000");
         return -1;
     }
+    ErrorHandler::logInfo("Successfully bound to port 53000");
+    ErrorHandler::logInfo("Server is now listening for connections on 0.0.0.0:53000");
     tcpListener.setBlocking(false);
     
     // Start TCP listener thread
@@ -1116,7 +1292,7 @@ int main() {
     }
 
     bool isFullscreen = true;
-    ServerState state = ServerState::StartScreen;
+    // Use global serverState instead of local state
     sf::UdpSocket udpSocket;
     std::thread udpWorker;
     bool udpThreadStarted = false;
@@ -1231,33 +1407,55 @@ int main() {
                 centerElements();
             }
 
-            if (state == ServerState::StartScreen) {
+            if (serverState.load() == ServerState::StartScreen) {
                 // Check if PLAY button is clicked (when player is ready)
                 if (showPlayButton && isButtonClicked(playButton, event, window)) {
-                    ErrorHandler::logInfo("PLAY button clicked, sending start signal to clients");
+                    ErrorHandler::logInfo("=== PLAY Button Clicked ===");
+                    ErrorHandler::logInfo("Preparing to send StartPacket to all ready clients");
                     
                     // Send StartPacket to all connected clients
                     {
                         std::lock_guard<std::mutex> lock(clientsMutex);
+                        ErrorHandler::logInfo("Total connected clients: " + std::to_string(connectedClients.size()));
+                        
                         StartPacket startPacket;
                         startPacket.type = MessageType::SERVER_START;
                         startPacket.timestamp = static_cast<uint32_t>(std::time(nullptr));
                         
+                        int readyCount = 0;
+                        int sentCount = 0;
+                        
                         for (auto& client : connectedClients) {
+                            ErrorHandler::logInfo("Checking client " + client.address.toString() + 
+                                                 " - Socket valid: " + (client.socket ? "yes" : "no") + 
+                                                 ", Ready: " + (client.isReady ? "yes" : "no"));
+                            
                             if (client.socket && client.isReady) {
+                                readyCount++;
                                 client.socket->setBlocking(true);
                                 sf::Socket::Status sendStatus = client.socket->send(&startPacket, sizeof(StartPacket));
                                 if (sendStatus == sf::Socket::Done) {
-                                    ErrorHandler::logInfo("Sent StartPacket to client " + client.address.toString());
+                                    sentCount++;
+                                    ErrorHandler::logInfo("✓ Successfully sent StartPacket to client " + client.address.toString());
                                 } else {
                                     ErrorHandler::logTCPError("Send StartPacket", sendStatus, client.address.toString());
                                 }
+                            } else {
+                                if (!client.socket) {
+                                    ErrorHandler::logWarning("Client " + client.address.toString() + " has null socket");
+                                }
+                                if (!client.isReady) {
+                                    ErrorHandler::logWarning("Client " + client.address.toString() + " is not ready");
+                                }
                             }
                         }
+                        
+                        ErrorHandler::logInfo("StartPacket send summary: " + std::to_string(sentCount) + 
+                                             " sent out of " + std::to_string(readyCount) + " ready clients");
                     }
                     
                     // Transition to main game screen
-                    state = ServerState::MainScreen;
+                    serverState.store(ServerState::MainScreen);
                     ErrorHandler::logInfo("Server transitioning to game screen");
 
                     // Start UDP listener thread for position synchronization
@@ -1272,7 +1470,7 @@ int main() {
 
         window.clear(sf::Color::Black);
 
-        if (state == ServerState::StartScreen) {
+        if (serverState.load() == ServerState::StartScreen) {
             // Update status text from global state
             {
                 std::lock_guard<std::mutex> lock(clientsMutex);
@@ -1292,7 +1490,7 @@ int main() {
                 window.draw(playButtonText);
             }
         }
-        else if (state == ServerState::MainScreen) {
+        else if (serverState.load() == ServerState::MainScreen) {
             // Calculate delta time for frame-independent movement
             float deltaTime = deltaClock.restart().asSeconds();
             
@@ -1385,23 +1583,61 @@ int main() {
                 }
             }
 
-            // Draw all walls as gray rectangles
-            for (const auto& wall : gameMap.walls) {
-                sf::RectangleShape wallShape(sf::Vector2f(wall.width * scaleX, wall.height * scaleY));
-                wallShape.setPosition(wall.x * scaleX, wall.y * scaleY);
-                wallShape.setFillColor(sf::Color(150, 150, 150)); // Gray color
-                wallShape.setOutlineColor(sf::Color(100, 100, 100)); // Darker gray outline
-                wallShape.setOutlineThickness(1.0f);
-                window.draw(wallShape);
-            }
+            // Render walls with fog of war effects and client players (blue circles, 20px) if visible
+            renderFogOfWar(window, sf::Vector2f(serverPos.x, serverPos.y), 
+                          gameMap.walls, clientCircles, clients, scaleX, scaleY);
             
-            // Draw connected clients as blue circles (radius 20px)
-            for (auto& pair : clientCircles) {
-                window.draw(pair.second);
-            }
-            
-            // Draw server player as green circle (radius 30px)
+            // Draw server player as green circle (radius 30px) - always visible
             window.draw(serverCircle);
+            
+            // Draw health bar above server player (green rectangle, 100 HP max)
+            const float healthBarWidth = 60.0f; // Maximum width
+            const float healthBarHeight = 8.0f;
+            const float healthBarOffsetY = 45.0f; // Distance above player
+            
+            // Calculate current health bar width based on health percentage
+            float healthPercentage = serverHealth / 100.0f;
+            float currentHealthBarWidth = healthBarWidth * healthPercentage;
+            
+            // Health bar background (dark red)
+            sf::RectangleShape healthBarBg(sf::Vector2f(healthBarWidth, healthBarHeight));
+            healthBarBg.setFillColor(sf::Color(100, 0, 0));
+            healthBarBg.setPosition(
+                renderPos.x * scaleX - healthBarWidth / 2.0f,
+                renderPos.y * scaleY - healthBarOffsetY
+            );
+            window.draw(healthBarBg);
+            
+            // Health bar foreground (green)
+            if (currentHealthBarWidth > 0.0f) {
+                sf::RectangleShape healthBar(sf::Vector2f(currentHealthBarWidth, healthBarHeight));
+                healthBar.setFillColor(sf::Color::Green);
+                healthBar.setPosition(
+                    renderPos.x * scaleX - healthBarWidth / 2.0f,
+                    renderPos.y * scaleY - healthBarOffsetY
+                );
+                window.draw(healthBar);
+            }
+            
+            // Apply fog overlay with circular cutout around server player
+            sf::Vector2f playerScreenPos(renderPos.x * scaleX, renderPos.y * scaleY);
+            applyFogOverlay(window, playerScreenPos, scaleX, scaleY);
+            
+            // Draw score in top-left corner
+            sf::Text scoreText;
+            scoreText.setFont(font);
+            scoreText.setString("Score: " + std::to_string(serverScore));
+            scoreText.setCharacterSize(28);
+            scoreText.setFillColor(sf::Color::White);
+            scoreText.setPosition(20.0f, 20.0f);
+            window.draw(scoreText);
+            
+            // Apply screen darkening effect if server player is dead
+            if (!serverIsAlive) {
+                sf::RectangleShape deathOverlay(sf::Vector2f(windowSize.x, windowSize.y));
+                deathOverlay.setFillColor(sf::Color(0, 0, 0, 180)); // Dark semi-transparent overlay
+                window.draw(deathOverlay);
+            }
         }
 
         window.display();

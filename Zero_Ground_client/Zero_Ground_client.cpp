@@ -585,25 +585,30 @@ bool clientIsAlive = true; // Client player alive status
 
 // Function to perform TCP connection and handshake
 bool performTCPHandshake(const std::string& ip) {
+    ErrorHandler::logInfo("=== Starting TCP Handshake ===");
     ErrorHandler::logInfo("Attempting TCP connection to " + ip + ":53000");
     
     // Create TCP socket
     tcpSocket = std::make_unique<sf::TcpSocket>();
     tcpSocket->setBlocking(true);
     
+    ErrorHandler::logInfo("TCP socket created, attempting connection...");
+    
     // Attempt to connect with 3 second timeout
     sf::Socket::Status status = tcpSocket->connect(ip, 53000, sf::seconds(3.0f));
+    
+    ErrorHandler::logInfo("Connection attempt completed with status: " + std::to_string(static_cast<int>(status)));
     
     if (status != sf::Socket::Done) {
         ErrorHandler::logTCPError("Connect to server", status, ip);
         ErrorHandler::logNetworkError("TCP Connection", "Failed to connect to " + ip + ":53000");
-        connectionMessage = "СЕРВЕР НЕДОСТУПЕН ИЛИ НЕВАЛИДНЫЙ IP";
+        connectionMessage = "THE SERVER IS UNAVAILABLE OR IP IS INVALID";
         connectionMessageColor = sf::Color::Red;
         tcpSocket.reset();
         return false;
     }
     
-    ErrorHandler::logInfo("TCP connection established");
+    ErrorHandler::logInfo("TCP connection established successfully!");
     
     // Send ConnectPacket
     ConnectPacket connectPacket;
@@ -611,7 +616,10 @@ bool performTCPHandshake(const std::string& ip) {
     connectPacket.protocolVersion = 1;
     strncpy_s(connectPacket.playerName, sizeof(connectPacket.playerName), "Client", _TRUNCATE);
     
+    ErrorHandler::logInfo("Sending ConnectPacket to server...");
     sf::Socket::Status sendStatus = tcpSocket->send(&connectPacket, sizeof(ConnectPacket));
+    ErrorHandler::logInfo("Send status: " + std::to_string(static_cast<int>(sendStatus)));
+    
     if (sendStatus != sf::Socket::Done) {
         ErrorHandler::logTCPError("Send ConnectPacket", sendStatus, ip);
         connectionMessage = "Failed to send connection packet";
@@ -620,14 +628,40 @@ bool performTCPHandshake(const std::string& ip) {
         return false;
     }
     
-    ErrorHandler::logInfo("ConnectPacket sent");
+    ErrorHandler::logInfo("ConnectPacket sent successfully");
     
-    // Receive MapDataPacket header
+    // Receive MapDataPacket header with timeout
+    ErrorHandler::logInfo("Waiting for MapDataPacket from server...");
+    
+    // Set a timeout for receiving data
+    tcpSocket->setBlocking(false);
+    sf::Clock timeoutClock;
+    const float timeout = 5.0f; // 5 second timeout
+    
     MapDataPacket mapHeader;
     std::size_t received = 0;
-    sf::Socket::Status receiveStatus = tcpSocket->receive(&mapHeader, sizeof(MapDataPacket), received);
+    sf::Socket::Status receiveStatus = sf::Socket::NotReady;
+    
+    while (timeoutClock.getElapsedTime().asSeconds() < timeout) {
+        receiveStatus = tcpSocket->receive(&mapHeader, sizeof(MapDataPacket), received);
+        
+        if (receiveStatus == sf::Socket::Done) {
+            break;
+        } else if (receiveStatus == sf::Socket::Disconnected || receiveStatus == sf::Socket::Error) {
+            break;
+        }
+        
+        sf::sleep(sf::milliseconds(10));
+    }
+    
+    tcpSocket->setBlocking(true);
+    
+    ErrorHandler::logInfo("Receive status: " + std::to_string(static_cast<int>(receiveStatus)) + ", received bytes: " + std::to_string(received));
     
     if (receiveStatus != sf::Socket::Done) {
+        if (timeoutClock.getElapsedTime().asSeconds() >= timeout) {
+            ErrorHandler::logNetworkError("Receive MapDataPacket", "Timeout after " + std::to_string(timeout) + " seconds");
+        }
         ErrorHandler::logTCPError("Receive MapDataPacket", receiveStatus, ip);
         connectionMessage = "Failed to receive map data";
         connectionMessageColor = sf::Color::Red;
@@ -742,7 +776,7 @@ bool performTCPHandshake(const std::string& ip) {
                              ", " + std::to_string(clientPos.y) + ")");
     }
     
-    connectionMessage = "Соединение установлено";
+    connectionMessage = "Connection established";
     connectionMessageColor = sf::Color::Green;
     ErrorHandler::logInfo("TCP handshake completed successfully");
     
@@ -883,7 +917,7 @@ int main() {
     // �������� ������ �����������
     sf::Text ipLabel;
     ipLabel.setFont(font);
-    ipLabel.setString("IP АДРЕС СЕРВЕРА:");
+    ipLabel.setString("SERVER IP ADDRESS:");
     ipLabel.setCharacterSize(32);
     ipLabel.setFillColor(sf::Color::White);
 
@@ -903,20 +937,20 @@ int main() {
 
     sf::Text connectText;
     connectText.setFont(font);
-    connectText.setString("ПОДКЛЮЧИТЬСЯ К СЕРВЕРУ");
+    connectText.setString("CONNECT TO THE SERVER");
     connectText.setCharacterSize(32);
     connectText.setFillColor(sf::Color::White);
 
     sf::Text errorText;
     errorText.setFont(font);
-    errorText.setString("СЕРВЕР НЕДОСТУПЕН ИЛИ НЕВАЛИДНЫЙ IP");
+    errorText.setString("THE SERVER IS UNAVAILABLE OR THE IP IS INVALID");
     errorText.setCharacterSize(28);
     errorText.setFillColor(sf::Color::Red);
     
     // Connection success message
     sf::Text connectionSuccessText;
     connectionSuccessText.setFont(font);
-    connectionSuccessText.setString("Соединение установлено");
+    connectionSuccessText.setString("Connection established");
     connectionSuccessText.setCharacterSize(32);
     connectionSuccessText.setFillColor(sf::Color::Green);
     
@@ -926,14 +960,14 @@ int main() {
     
     sf::Text readyText;
     readyText.setFont(font);
-    readyText.setString("ГОТОВ");
+    readyText.setString("READY");
     readyText.setCharacterSize(32);
     readyText.setFillColor(sf::Color::White);
     
     // Waiting for start message
     sf::Text waitingStartText;
     waitingStartText.setFont(font);
-    waitingStartText.setString("Ожидание старта игры...");
+    waitingStartText.setString("Waitind for the start...");
     waitingStartText.setCharacterSize(28);
     waitingStartText.setFillColor(sf::Color::Yellow);
 
@@ -1062,15 +1096,23 @@ int main() {
             else if (state == ClientState::Connected) {
                 // Handle READY button click
                 if (isButtonClicked(readyButton, event, window)) {
+                    ErrorHandler::logInfo("=== READY Button Clicked ===");
+                    
                     // Send ReadyPacket to server
                     ReadyPacket readyPacket;
                     readyPacket.type = MessageType::CLIENT_READY;
                     readyPacket.isReady = true;
                     
                     if (tcpSocket) {
+                        ErrorHandler::logInfo("Sending ReadyPacket to server...");
+                        ErrorHandler::logInfo("Packet size: " + std::to_string(sizeof(ReadyPacket)) + " bytes");
+                        
                         sf::Socket::Status sendStatus = tcpSocket->send(&readyPacket, sizeof(ReadyPacket));
+                        ErrorHandler::logInfo("Send status: " + std::to_string(static_cast<int>(sendStatus)));
+                        
                         if (sendStatus == sf::Socket::Done) {
-                            ErrorHandler::logInfo("ReadyPacket sent to server");
+                            ErrorHandler::logInfo("✓ ReadyPacket sent successfully to server");
+                            ErrorHandler::logInfo("Transitioning to WaitingForStart state");
                             state = ClientState::WaitingForStart;
                         } else {
                             ErrorHandler::logTCPError("Send ReadyPacket", sendStatus, serverIP);
@@ -1150,13 +1192,28 @@ int main() {
                 sf::Socket::Status receiveStatus = tcpSocket->receive(&startPacket, sizeof(StartPacket), received);
                 
                 if (receiveStatus == sf::Socket::Done) {
+                    ErrorHandler::logInfo("=== Received Data from Server ===");
+                    ErrorHandler::logInfo("Received bytes: " + std::to_string(received));
+                    ErrorHandler::logInfo("Expected bytes: " + std::to_string(sizeof(StartPacket)));
+                    
                     if (received == sizeof(StartPacket)) {
+                        ErrorHandler::logInfo("Packet type: " + std::to_string(static_cast<int>(startPacket.type)));
+                        ErrorHandler::logInfo("Expected type: " + std::to_string(static_cast<int>(MessageType::SERVER_START)));
+                        
                         if (startPacket.type == MessageType::SERVER_START) {
-                            ErrorHandler::logInfo("StartPacket received from server");
+                            ErrorHandler::logInfo("✓ Valid StartPacket received from server!");
                             
                             // Start UDP thread for position synchronization
                             if (!udpThreadStarted) {
                                 lastPacketReceived.restart(); // Initialize connection timeout timer
+                                
+                                // Set serverConnected to true before starting UDP thread
+                                // This prevents false "connection lost" detection immediately after starting
+                                {
+                                    std::lock_guard<std::mutex> lock(mutex);
+                                    serverConnected = true;
+                                }
+                                
                                 udpWorker = std::thread(udpThread, std::move(udpSocket), serverIP);
                                 udpThreadStarted = true;
                                 ErrorHandler::logInfo("UDP thread started for position synchronization at 20Hz");
@@ -1176,13 +1233,21 @@ int main() {
                         ErrorHandler::handleInvalidPacket(oss.str(), serverIP);
                     }
                 } else if (receiveStatus == sf::Socket::Disconnected) {
+                    ErrorHandler::logWarning("Socket disconnected while waiting for StartPacket");
                     ErrorHandler::handleConnectionLost(serverIP);
                     state = ClientState::ConnectionLost;
                 } else if (receiveStatus != sf::Socket::NotReady) {
-                    ErrorHandler::logTCPError("Receive StartPacket", receiveStatus, serverIP);
+                    // Only log non-NotReady errors to avoid spam
+                    static sf::Clock errorLogClock;
+                    if (errorLogClock.getElapsedTime().asSeconds() > 5.0f) {
+                        ErrorHandler::logTCPError("Receive StartPacket", receiveStatus, serverIP);
+                        errorLogClock.restart();
+                    }
                 }
                 
                 tcpSocket->setBlocking(true);
+            } else {
+                ErrorHandler::logWarning("TCP socket is null while waiting for StartPacket");
             }
         }
         else if (state == ClientState::MainScreen) {
@@ -1307,7 +1372,7 @@ int main() {
             // Draw score in top-left corner
             sf::Text scoreText;
             scoreText.setFont(font);
-            scoreText.setString("Счёт: " + std::to_string(clientScore));
+            scoreText.setString("Score: " + std::to_string(clientScore));
             scoreText.setCharacterSize(28);
             scoreText.setFillColor(sf::Color::White);
             scoreText.setPosition(20.0f, 20.0f);
@@ -1324,7 +1389,7 @@ int main() {
             // Display connection lost screen
             sf::Text connectionLostText;
             connectionLostText.setFont(font);
-            connectionLostText.setString("Соединение потеряно. Нажмите R для переподключения к " + serverIP);
+            connectionLostText.setString("Connection lost. Press R to reconnect to " + serverIP);
             connectionLostText.setCharacterSize(32);
             connectionLostText.setFillColor(sf::Color::Red);
             
@@ -1348,6 +1413,12 @@ int main() {
                     }
                     udpThreadStarted = false;
                     ErrorHandler::logInfo("UDP thread stopped for reconnection");
+                }
+                
+                // Reset connection state
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    serverConnected = false;
                 }
                 
                 // Reset UDP socket
