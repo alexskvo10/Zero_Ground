@@ -90,7 +90,7 @@ int main() {
     std::thread udpWorker;
     sf::Clock errorTimer;
 
-    // Элементы экрана подключения
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     sf::Text ipLabel;
     ipLabel.setFont(font);
     ipLabel.setString("SERVER IP ADDRESS:");
@@ -123,7 +123,7 @@ int main() {
     errorText.setCharacterSize(28);
     errorText.setFillColor(sf::Color::Red);
 
-    // Элементы основного экрана
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
     sf::CircleShape clientCircle(30.0f);
     clientCircle.setFillColor(sf::Color::Blue);
     clientCircle.setOutlineColor(sf::Color(0, 0, 100));
@@ -135,7 +135,7 @@ int main() {
     serverCircle.setOutlineColor(sf::Color(0, 100, 0));
     serverCircle.setOutlineThickness(2.0f);
 
-    // Функция для центрирования элементов
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     auto centerElements = [&]() {
         sf::Vector2u windowSize = window.getSize();
 
@@ -161,14 +161,14 @@ int main() {
             if (event.type == sf::Event::Closed)
                 window.close();
 
-            // Обработка Esc для переключения режима
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ Esc пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
             if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape) {
                 toggleFullscreen(window, isFullscreen, desktopMode);
                 centerElements();
             }
 
             if (state == ClientState::ConnectScreen) {
-                // Обработка клика на поле ввода
+                // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
                 if (event.type == sf::Event::MouseButtonPressed) {
                     sf::Vector2i mousePos = sf::Mouse::getPosition(window);
                     inputActive = ipField.getGlobalBounds().contains(
@@ -177,7 +177,7 @@ int main() {
                     );
                 }
 
-                // Обработка ввода с клавиатуры
+                // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
                 if (inputActive) {
                     if (event.type == sf::Event::KeyPressed) {
                         if (event.key.code == sf::Keyboard::BackSpace && !inputIP.empty()) {
@@ -188,7 +188,7 @@ int main() {
                     else if (event.type == sf::Event::TextEntered) {
                         if (event.text.unicode < 128) {
                             char c = static_cast<char>(event.text.unicode);
-                            if (c == '\b') { // Backspace в текстовом событии
+                            if (c == '\b') { // Backspace пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
                                 if (!inputIP.empty()) {
                                     inputIP.pop_back();
                                     ipText.setString(inputIP);
@@ -201,7 +201,7 @@ int main() {
                                 }
                             }
                             else if (c == '\r' || c == '\n') { // Enter
-                                // Автоматическая попытка подключения при нажатии Enter
+                                // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ Enter
                                 sf::TcpSocket testSocket;
                                 testSocket.setBlocking(true);
                                 sf::Socket::Status status = testSocket.connect(inputIP, 53000, sf::seconds(3.0f));
@@ -225,7 +225,7 @@ int main() {
                     }
                 }
 
-                // Обработка нажатия кнопки подключения
+                // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
                 if (isButtonClicked(connectButton, event, window)) {
                     sf::TcpSocket testSocket;
                     testSocket.setBlocking(true);
@@ -258,7 +258,7 @@ int main() {
             window.draw(connectButton);
             window.draw(connectText);
 
-            // Визуальная индикация активного поля ввода
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
             if (inputActive) {
                 ipField.setOutlineColor(sf::Color::Green);
                 ipField.setOutlineThickness(3.0f);
@@ -281,7 +281,7 @@ int main() {
             }
         }
         else if (state == ClientState::MainScreen) {
-            // Управление клиентским кругом
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
             if (window.hasFocus()) {
                 float speed = 300.0f * 0.016f;
                 if (sf::Keyboard::isKeyPressed(sf::Keyboard::W)) clientPos.y -= speed;
@@ -295,7 +295,7 @@ int main() {
                 clientCircle.setPosition(clientPos.x - 30.0f, clientPos.y - 30.0f);
             }
 
-            // Обновление позиции серверного круга
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 sf::Vector2u windowSize = window.getSize();
@@ -305,7 +305,7 @@ int main() {
                 );
             }
 
-            // Отрисовка
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
             if (serverConnected) {
                 window.draw(serverCircle);
             }
@@ -316,7 +316,7 @@ int main() {
         sf::sleep(sf::milliseconds(16));
     }
 
-    // Остановка потока UDP
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ UDP
     if (udpThreadStarted) {
         udpWorker.join();
     }

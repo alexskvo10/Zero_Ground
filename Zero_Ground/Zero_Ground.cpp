@@ -91,14 +91,14 @@ int main() {
     std::thread udpWorker;
     bool udpThreadStarted = false;
 
-    // Получаем локальный IP-адрес
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ IP-пїЅпїЅпїЅпїЅпїЅ
     sf::IpAddress localIP = sf::IpAddress::getLocalAddress();
     std::string ipString = localIP.toString();
     if (ipString == "0.0.0.0" || ipString == "127.0.0.1") {
         ipString = "IP not available";
     }
 
-    // Элементы стартового экрана
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
     sf::Text startText;
     startText.setFont(font);
     startText.setString("SERVER STARTED");
@@ -120,7 +120,7 @@ int main() {
     buttonText.setCharacterSize(32);
     buttonText.setFillColor(sf::Color::White);
 
-    // Элементы основного экрана
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
     sf::CircleShape serverCircle(30.0f);
     serverCircle.setFillColor(sf::Color::Green);
     serverCircle.setOutlineColor(sf::Color(0, 100, 0));
@@ -129,7 +129,7 @@ int main() {
 
     std::map<sf::IpAddress, sf::CircleShape> clientCircles;
 
-    // Функция для центрирования элементов
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     auto centerElements = [&]() {
         sf::Vector2u windowSize = window.getSize();
 
@@ -152,7 +152,7 @@ int main() {
             if (event.type == sf::Event::Closed)
                 window.close();
 
-            // Обработка Esc для переключения режима
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ Esc пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
             if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape) {
                 toggleFullscreen(window, isFullscreen, desktopMode);
                 centerElements();
@@ -179,7 +179,7 @@ int main() {
             window.draw(buttonText);
         }
         else if (state == ServerState::MainScreen) {
-            // Управление серверным кругом
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
             if (window.hasFocus()) {
                 float speed = 300.0f * 0.016f;
                 if (sf::Keyboard::isKeyPressed(sf::Keyboard::W)) serverPos.y -= speed;
@@ -193,7 +193,7 @@ int main() {
                 serverCircle.setPosition(serverPos.x - 30.0f, serverPos.y - 30.0f);
             }
 
-            // Принятие подключений
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
             sf::TcpSocket* client = new sf::TcpSocket;
             if (tcpListener.accept(*client) == sf::Socket::Done) {
                 delete client;
@@ -202,7 +202,7 @@ int main() {
                 delete client;
             }
 
-            // Обновление клиентских кругов
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 for (auto& pair : clients) {
@@ -224,7 +224,7 @@ int main() {
                 }
             }
 
-            // Отрисовка
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
             for (auto& pair : clientCircles) {
                 window.draw(pair.second);
             }
@@ -235,7 +235,7 @@ int main() {
         sf::sleep(sf::milliseconds(16));
     }
 
-    // Остановка потока UDP
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ UDP
     if (udpThreadStarted) {
         udpWorker.join();
     }
