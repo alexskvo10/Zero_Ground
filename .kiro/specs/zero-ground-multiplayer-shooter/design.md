@@ -1,21 +1,23 @@
-# Design Document
+# Документ дизайна
 
-## Overview
+## Обзор
 
-Zero Ground is a client-server multiplayer 2D shooter built with C++ and SFML 2.6.1. The architecture separates concerns into distinct layers: network transport (TCP/UDP), game state management, rendering, and input handling. The server acts as the authoritative source for game state, generating the map and coordinating player readiness before game start. Clients connect, synchronize state via UDP, and render their local view with fog of war effects.
+Zero Ground - это клиент-серверный многопользовательский 2D шутер, построенный на C++ и SFML 2.6.1. Архитектура разделяет задачи на отдельные слои: сетевой транспорт (TCP/UDP), управление состоянием игры, рендеринг и обработка ввода. Сервер выступает в качестве авторитетного источника состояния игры, генерируя карту и координируя готовность игроков перед стартом игры. Клиенты подключаются, синхронизируют состояние через UDP и отрисовывают свой локальный вид с эффектами тумана войны.
 
-The design emphasizes thread safety through mutex-protected shared state, network optimization through spatial culling, and smooth gameplay through interpolation. The ready-check system ensures coordinated game start, while the fog of war system creates strategic gameplay depth.
+Дизайн делает акцент на потокобезопасности через защищённое mutex общее состояние, оптимизацию сети через пространственную отсечку и плавный геймплей через интерполяцию. Система проверки готовности обеспечивает координированный старт игры, в то время как система тумана войны создаёт стратегическую глубину геймплея.
 
-## Architecture
+**ВАЖНО: Размер игрового поля - 500x500 единиц (изменено с 1000x1000)**
 
-### High-Level Architecture
+## Архитектура
+
+### Высокоуровневая архитектура
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                         SERVER                               │
+│                         СЕРВЕР                               │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ TCP Listener │  │ UDP Socket   │  │ Game State   │      │
-│  │ (Port 53000) │  │ (Port 53001) │  │ Manager      │      │
+│  │ TCP Слушатель│  │ UDP Сокет    │  │ Менеджер     │      │
+│  │ (Порт 53000) │  │ (Порт 53001) │  │ Состояния    │      │
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘      │
 │         │                  │                  │              │
 │         └──────────────────┴──────────────────┘              │
@@ -23,18 +25,18 @@ The design emphasizes thread safety through mutex-protected shared state, networ
 │         ┌──────────────────┴──────────────────┐             │
 │         │                                      │             │
 │  ┌──────▼───────┐  ┌──────────────┐  ┌───────▼──────┐      │
-│  │ Map Generator│  │ Collision    │  │ Render       │      │
-│  │ (BFS)        │  │ Detection    │  │ Engine       │      │
+│  │ Генератор    │  │ Обнаружение  │  │ Движок       │      │
+│  │ Карты (BFS)  │  │ Столкновений │  │ Рендеринга   │      │
 │  └──────────────┘  └──────────────┘  └──────────────┘      │
 └─────────────────────────────────────────────────────────────┘
                             ▲
                             │ TCP/UDP
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                         CLIENT                               │
+│                         КЛИЕНТ                               │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ TCP Socket   │  │ UDP Socket   │  │ Local State  │      │
-│  │ (Port 53000) │  │ (Port 53002) │  │ Manager      │      │
+│  │ TCP Сокет    │  │ UDP Сокет    │  │ Локальный    │      │
+│  │ (Порт 53000) │  │ (Порт 53002) │  │ Менеджер     │      │
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘      │
 │         │                  │                  │              │
 │         └──────────────────┴──────────────────┘              │
@@ -42,176 +44,181 @@ The design emphasizes thread safety through mutex-protected shared state, networ
 │         ┌──────────────────┴──────────────────┐             │
 │         │                                      │             │
 │  ┌──────▼───────┐  ┌──────────────┐  ┌───────▼──────┐      │
-│  │ Input        │  │ Fog of War   │  │ Render       │      │
-│  │ Handler      │  │ System       │  │ Engine       │      │
+│  │ Обработчик   │  │ Система      │  │ Движок       │      │
+│  │ Ввода        │  │ Тумана Войны │  │ Рендеринга   │      │
 │  └──────────────┘  └──────────────┘  └──────────────┘      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Component Responsibilities
+### Ответственность компонентов
 
-**Server Components:**
-- **TCP Listener**: Handles initial client connections, ready status, and game start signals
-- **UDP Socket**: Broadcasts player positions at 20Hz to connected clients
-- **Game State Manager**: Maintains authoritative player positions, health, and scores with mutex protection
-- **Map Generator**: Creates procedural maps with BFS validation for connectivity
-- **Collision Detection**: Uses quadtree spatial partitioning for efficient wall collision checks
-- **Render Engine**: Displays server player (green circle) and connected clients (blue circles)
+**Компоненты сервера:**
+- **TCP Слушатель**: Обрабатывает начальные подключения клиентов, статус готовности и сигналы старта игры
+- **UDP Сокет**: Транслирует позиции игроков с частотой 20Hz подключённым клиентам
+- **Менеджер состояния игры**: Поддерживает авторитетные позиции игроков, здоровье и счёт с защитой mutex
+- **Генератор карты**: Создаёт процедурные карты с BFS валидацией связности
+- **Обнаружение столкновений**: Использует пространственное разбиение quadtree для эффективной проверки столкновений со стенами
+- **Движок рендеринга**: Отображает игрока сервера (зелёный круг) и подключённых клиентов (синие круги)
 
-**Client Components:**
-- **TCP Socket**: Receives map data, initial state, and game start signals
-- **UDP Socket**: Sends local player position and receives other player positions
-- **Local State Manager**: Maintains interpolated positions for smooth rendering
-- **Input Handler**: Processes WASD input and sends position updates
-- **Fog of War System**: Calculates visibility radius and applies darkening effects
-- **Render Engine**: Displays local player (blue circle), visible enemies, and walls with fog effects
+**Компоненты клиента:**
+- **TCP Сокет**: Получает данные карты, начальное состояние и сигналы старта игры
+- **UDP Сокет**: Отправляет позицию локального игрока и получает позиции других игроков
+- **Локальный менеджер состояния**: Поддерживает интерполированные позиции для плавной отрисовки
+- **Обработчик ввода**: Обрабатывает ввод WASD и отправляет обновления позиции
+- **Система тумана войны**: Рассчитывает радиус видимости и применяет эффекты затемнения
+- **Движок рендеринга**: Отображает локального игрока (синий круг), видимых врагов и стены с эффектами тумана
 
-### State Machine Diagrams
+### Диаграммы конечных автоматов
 
-**Server State Flow:**
+**Поток состояний сервера:**
 ```
 ┌─────────────┐
-│ StartScreen │
-│ (Show IP)   │
+│ Стартовый   │
+│ Экран       │
+│ (Показ IP)  │
 └──────┬──────┘
        │
-       │ Client connects
+       │ Клиент подключается
        ▼
 ┌─────────────┐
-│ WaitingReady│
-│ (Yellow msg)│
+│ Ожидание    │
+│ Готовности  │
+│ (Жёлтое сообщ)│
 └──────┬──────┘
        │
-       │ Client sends READY
+       │ Клиент отправляет ГОТОВ
        ▼
 ┌─────────────┐
-│ PlayerReady │
-│ (Green msg) │
-│ Show PLAY   │
+│ Игрок Готов │
+│ (Зелёное сообщ)│
+│ Показ ИГРАТЬ│
 └──────┬──────┘
        │
-       │ Operator clicks PLAY
+       │ Оператор нажимает ИГРАТЬ
        ▼
 ┌─────────────┐
-│ GameActive  │
-│ (Main loop) │
+│ Игра Активна│
+│ (Главный цикл)│
 └─────────────┘
 ```
 
-**Client State Flow:**
+**Поток состояний клиента:**
 ```
 ┌─────────────┐
-│ ConnectScreen│
-│ (Input IP)  │
+│ Экран       │
+│ Подключения │
+│ (Ввод IP)   │
 └──────┬──────┘
        │
-       │ Click CONNECT / Press Enter
+       │ Нажатие ПОДКЛЮЧИТЬСЯ / Enter
        ▼
 ┌─────────────┐
-│ Connecting  │
-│ (TCP test)  │
+│ Подключение │
+│ (TCP тест)  │
 └──────┬──────┘
        │
-       ├─ Fail ──► ErrorScreen (3s) ──► ConnectScreen
+       ├─ Неудача ──► Экран ошибки (3с) ──► Экран подключения
        │
-       │ Success
+       │ Успех
        ▼
 ┌─────────────┐
-│ Connected   │
-│ Show READY  │
+│ Подключён   │
+│ Показ ГОТОВ │
 └──────┬──────┘
        │
-       │ Click READY
+       │ Нажатие ГОТОВ
        ▼
 ┌─────────────┐
-│ WaitingStart│
-│ (Yellow msg)│
+│ Ожидание    │
+│ Старта      │
+│ (Жёлтое сообщ)│
 └──────┬──────┘
        │
-       │ Receive START signal
+       │ Получение сигнала СТАРТ
        ▼
 ┌─────────────┐
-│ GameActive  │
-│ (Main loop) │
+│ Игра Активна│
+│ (Главный цикл)│
 └─────────────┘
 ```
 
-## Components and Interfaces
+## Компоненты и интерфейсы
 
-### Network Protocol
+### Сетевой протокол
 
-**TCP Messages (Port 53000):**
+**TCP Сообщения (Порт 53000):**
 
 ```cpp
-// Message types
+// Типы сообщений
 enum class MessageType : uint8_t {
-    CLIENT_CONNECT = 0x01,      // Client → Server
-    SERVER_ACK = 0x02,          // Server → Client
-    CLIENT_READY = 0x03,        // Client → Server
-    SERVER_START = 0x04,        // Server → Client
-    MAP_DATA = 0x05             // Server → Client
+    CLIENT_CONNECT = 0x01,      // Клиент → Сервер
+    SERVER_ACK = 0x02,          // Сервер → Клиент
+    CLIENT_READY = 0x03,        // Клиент → Сервер
+    SERVER_START = 0x04,        // Сервер → Клиент
+    MAP_DATA = 0x05             // Сервер → Клиент
 };
 
-// Connection packet
+// Пакет подключения
 struct ConnectPacket {
     MessageType type = MessageType::CLIENT_CONNECT;
     uint32_t protocolVersion = 1;
     char playerName[32] = {0};
 };
 
-// Ready packet
+// Пакет готовности
 struct ReadyPacket {
     MessageType type = MessageType::CLIENT_READY;
     bool isReady = true;
 };
 
-// Game start packet
+// Пакет старта игры
 struct StartPacket {
     MessageType type = MessageType::SERVER_START;
     uint32_t timestamp;
 };
 
-// Map data packet
+// Пакет данных карты
 struct MapDataPacket {
     MessageType type = MessageType::MAP_DATA;
     uint32_t wallCount;
-    // Followed by wallCount * Wall structures
+    // Далее следует wallCount * структур Wall
 };
 
 struct Wall {
-    float x, y;           // Top-left corner
+    float x, y;           // Верхний левый угол
     float width, height;
 };
 ```
 
-**UDP Messages (Port 53001):**
+**UDP Сообщения (Порт 53001):**
 
 ```cpp
-// Position update packet (sent 20 times per second)
+// Пакет обновления позиции (отправляется 20 раз в секунду)
 struct PositionPacket {
     float x, y;
     bool isAlive;
-    uint32_t frameID;     // For lag compensation
+    uint32_t frameID;     // Для компенсации задержки
     uint8_t playerId;
 };
 ```
 
-### Core Data Structures
+
+### Основные структуры данных
 
 ```cpp
-// Player representation
+// Представление игрока
 struct Player {
     uint32_t id;
     sf::IpAddress ipAddress;
     float x, y;
-    float previousX, previousY;  // For interpolation
+    float previousX, previousY;  // Для интерполяции
     float health = 100.0f;
     int score = 0;
     bool isAlive = true;
     bool isReady = false;
     sf::Color color;
     
-    // Interpolation support
+    // Поддержка интерполяции
     float getInterpolatedX(float alpha) const {
         return previousX + (x - previousX) * alpha;
     }
@@ -221,20 +228,20 @@ struct Player {
     }
 };
 
-// Game map
+// Игровая карта (500x500 единиц)
 struct GameMap {
     std::vector<Wall> walls;
-    const float width = 1000.0f;
-    const float height = 1000.0f;
+    const float width = 500.0f;   // Изменено с 1000.0f
+    const float height = 500.0f;  // Изменено с 1000.0f
     
-    // Quadtree for collision optimization
+    // Quadtree для оптимизации столкновений
     std::unique_ptr<Quadtree> spatialIndex;
     
     bool isValidPath(sf::Vector2f start, sf::Vector2f end) const;
     void generate();
 };
 
-// Quadtree node for spatial partitioning
+// Узел Quadtree для пространственного разбиения
 struct Quadtree {
     sf::FloatRect bounds;
     std::vector<Wall*> walls;
@@ -247,7 +254,7 @@ struct Quadtree {
 };
 ```
 
-### Map Generation Algorithm
+### Алгоритм генерации карты
 
 ```cpp
 class MapGenerator {
@@ -262,18 +269,18 @@ public:
                 return map;
             }
         }
-        throw std::runtime_error("Failed to generate valid map after 10 attempts");
+        throw std::runtime_error("Не удалось сгенерировать валидную карту после 10 попыток");
     }
     
 private:
     void generateWalls(GameMap& map) {
-        const float targetCoverage = 0.30f; // 30% average
-        const float totalArea = 1000.0f * 1000.0f;
+        const float targetCoverage = 0.30f; // 30% в среднем
+        const float totalArea = 500.0f * 500.0f; // 250,000 кв. единиц
         float currentCoverage = 0.0f;
         
         std::random_device rd;
         std::mt19937 gen(rd());
-        std::uniform_real_distribution<float> posDist(0.0f, 1000.0f);
+        std::uniform_real_distribution<float> posDist(0.0f, 500.0f);
         std::uniform_real_distribution<float> sizeDist(2.0f, 8.0f);
         
         while (currentCoverage < targetCoverage * totalArea) {
@@ -283,7 +290,7 @@ private:
             wall.width = sizeDist(gen);
             wall.height = sizeDist(gen);
             
-            // Ensure wall doesn't overlap spawn points
+            // Убедиться, что стена не перекрывает точки спавна
             if (!overlapsSpawnPoint(wall)) {
                 map.walls.push_back(wall);
                 currentCoverage += wall.width * wall.height;
@@ -292,16 +299,16 @@ private:
     }
     
     bool validateConnectivity(const GameMap& map) {
-        // BFS from bottom-left to top-right
-        sf::Vector2f start(50.0f, 950.0f);  // Server spawn
-        sf::Vector2f end(950.0f, 50.0f);    // Client spawn
+        // BFS от нижнего левого к верхнему правому
+        sf::Vector2f start(25.0f, 475.0f);  // Спавн сервера (изменено)
+        sf::Vector2f end(475.0f, 25.0f);    // Спавн клиента (изменено)
         
         return bfsPathExists(start, end, map);
     }
     
     bool bfsPathExists(sf::Vector2f start, sf::Vector2f end, const GameMap& map) {
-        // Grid-based BFS with 10x10 unit cells
-        const int gridSize = 100;
+        // BFS на основе сетки с ячейками 10x10 единиц
+        const int gridSize = 50; // Изменено с 100 (500/10 = 50)
         std::vector<std::vector<bool>> visited(gridSize, std::vector<bool>(gridSize, false));
         std::queue<sf::Vector2i> queue;
         
@@ -346,24 +353,24 @@ private:
     
     bool overlapsSpawnPoint(const Wall& wall) {
         sf::FloatRect wallBounds(wall.x, wall.y, wall.width, wall.height);
-        sf::FloatRect serverSpawn(0.0f, 900.0f, 100.0f, 100.0f);
-        sf::FloatRect clientSpawn(900.0f, 0.0f, 100.0f, 100.0f);
+        sf::FloatRect serverSpawn(0.0f, 450.0f, 50.0f, 50.0f);   // Изменено
+        sf::FloatRect clientSpawn(450.0f, 0.0f, 50.0f, 50.0f);   // Изменено
         
         return wallBounds.intersects(serverSpawn) || wallBounds.intersects(clientSpawn);
     }
 };
 ```
 
-### Collision Detection System
+### Система обнаружения столкновений
 
 ```cpp
 class CollisionSystem {
 public:
     CollisionSystem(const GameMap& map) : map_(map) {}
     
-    // Returns adjusted position after collision resolution
+    // Возвращает скорректированную позицию после разрешения столкновения
     sf::Vector2f resolveCollision(sf::Vector2f oldPos, sf::Vector2f newPos, float radius) {
-        // Query nearby walls using quadtree
+        // Запрос ближайших стен используя quadtree
         sf::FloatRect queryArea(
             newPos.x - radius - 1.0f,
             newPos.y - radius - 1.0f,
@@ -375,7 +382,7 @@ public:
         
         for (const Wall* wall : nearbyWalls) {
             if (circleRectCollision(newPos, radius, *wall)) {
-                // Push back by 1 unit in opposite direction
+                // Оттолкнуть на 1 единицу в противоположном направлении
                 sf::Vector2f direction = oldPos - newPos;
                 float length = std::sqrt(direction.x * direction.x + direction.y * direction.y);
                 
@@ -384,16 +391,16 @@ public:
                     return oldPos + direction * 1.0f;
                 }
                 
-                return oldPos; // No movement if already colliding
+                return oldPos; // Нет движения если уже в столкновении
             }
         }
         
-        return newPos; // No collision
+        return newPos; // Нет столкновения
     }
     
 private:
     bool circleRectCollision(sf::Vector2f center, float radius, const Wall& wall) {
-        // Find closest point on rectangle to circle center
+        // Найти ближайшую точку на прямоугольнике к центру круга
         float closestX = std::max(wall.x, std::min(center.x, wall.x + wall.width));
         float closestY = std::max(wall.y, std::min(center.y, wall.y + wall.height));
         
@@ -407,7 +414,7 @@ private:
 };
 ```
 
-### Fog of War Rendering
+### Рендеринг тумана войны
 
 ```cpp
 class FogOfWarRenderer {
@@ -416,22 +423,22 @@ public:
                 const std::vector<Player>& otherPlayers, const GameMap& map) {
         const float visibilityRadius = 25.0f;
         
-        // Render all walls (dimmed outside radius)
+        // Отрисовать все стены (затемнённые вне радиуса)
         for (const auto& wall : map.walls) {
             sf::RectangleShape wallShape(sf::Vector2f(wall.width, wall.height));
             wallShape.setPosition(wall.x, wall.y);
             
             float distance = getDistance(playerPos, sf::Vector2f(wall.x, wall.y));
             if (distance > visibilityRadius) {
-                wallShape.setFillColor(sf::Color(100, 100, 100)); // Dimmed
+                wallShape.setFillColor(sf::Color(100, 100, 100)); // Затемнённый
             } else {
-                wallShape.setFillColor(sf::Color(150, 150, 150)); // Normal
+                wallShape.setFillColor(sf::Color(150, 150, 150)); // Нормальный
             }
             
             window.draw(wallShape);
         }
         
-        // Render only visible players
+        // Отрисовать только видимых игроков
         for (const auto& player : otherPlayers) {
             float distance = getDistance(playerPos, sf::Vector2f(player.x, player.y));
             if (distance <= visibilityRadius) {
@@ -442,12 +449,12 @@ public:
             }
         }
         
-        // Apply fog overlay
+        // Применить оверлей тумана
         sf::RectangleShape fogOverlay(sf::Vector2f(window.getSize()));
         fogOverlay.setFillColor(sf::Color(0, 0, 0, 200));
         
-        // Create circular cutout using shader (simplified approach)
-        // In actual implementation, use sf::Shader for proper circular fog
+        // Создать круговую вырезку используя шейдер (упрощённый подход)
+        // В реальной реализации использовать sf::Shader для правильного кругового тумана
         window.draw(fogOverlay);
     }
     
@@ -460,14 +467,14 @@ private:
 };
 ```
 
-## Data Models
+## Модели данных
 
-### Thread-Safe Game State
+### Потокобезопасное состояние игры
 
 ```cpp
 class GameState {
 public:
-    // Thread-safe player access
+    // Потокобезопасный доступ к игрокам
     void updatePlayerPosition(uint32_t playerId, float x, float y) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (players_.count(playerId)) {
@@ -522,14 +529,14 @@ private:
 };
 ```
 
-### Network Packet Validation
+### Валидация сетевых пакетов
 
 ```cpp
 class PacketValidator {
 public:
     static bool validatePosition(const PositionPacket& packet) {
-        return packet.x >= 0.0f && packet.x <= 1000.0f &&
-               packet.y >= 0.0f && packet.y <= 1000.0f;
+        return packet.x >= 0.0f && packet.x <= 500.0f &&  // Изменено с 1000.0f
+               packet.y >= 0.0f && packet.y <= 500.0f;    // Изменено с 1000.0f
     }
     
     static bool validateMapData(const MapDataPacket& packet) {
@@ -543,225 +550,52 @@ public:
 };
 ```
 
+## Обработка ошибок
 
-## Correctness Properties
+### Сетевые ошибки
 
-*A property is a characteristic or behavior that should hold true across all valid executions of a system—essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.*
+**Ошибки подключения:**
+- Таймаут TCP подключения (3 секунды) вызывает экран ошибки с опцией повтора
+- Невалидный формат IP адреса отображает сообщение об ошибке на 3 секунды
+- Обнаружение потери соединения после 2 секунд без UDP пакетов
 
-### Property 1: Wall Dimensions Validity
-
-*For any* generated map, all walls should have width between 2-8 units and height between 2-8 units.
-
-**Validates: Requirements 1.2**
-
-### Property 2: Map Coverage Constraint
-
-*For any* generated map, the total area covered by walls should be between 25% and 35% of the total map area (1,000,000 square units).
-
-**Validates: Requirements 1.3**
-
-### Property 3: Spawn Point Connectivity
-
-*For any* successfully generated map, a valid path must exist between the server spawn point (bottom-left) and client spawn point (top-right) as verified by BFS algorithm.
-
-**Validates: Requirements 1.4**
-
-### Property 4: Movement Speed Consistency
-
-*For any* player position and movement direction, updating position over 1 second should result in displacement of exactly 5 units in that direction.
-
-**Validates: Requirements 2.1**
-
-### Property 5: Server Input Isolation
-
-*For any* server WASD input, only the server player position should change, and all client player positions should remain unchanged.
-
-**Validates: Requirements 2.2**
-
-### Property 6: Client Input Isolation
-
-*For any* client WASD input, only that specific client's player position should change, and all other player positions (server and other clients) should remain unchanged.
-
-**Validates: Requirements 2.3**
-
-### Property 7: Collision Stops Movement
-
-*For any* player moving toward a wall, when collision is detected, the player's position should not penetrate the wall boundary.
-
-**Validates: Requirements 2.4**
-
-### Property 8: Collision Pushback Distance
-
-*For any* collision between a player and a wall, the player should be pushed back exactly 1 unit from the collision point.
-
-**Validates: Requirements 2.5**
-
-### Property 9: Position Boundary Clamping
-
-*For any* player position update, the resulting x and y coordinates should always be within the range [0, 1000].
-
-**Validates: Requirements 2.6**
-
-### Property 10: Visibility Radius Calculation
-
-*For any* player position and another entity position, the entity should be considered visible if and only if the Euclidean distance between them is less than or equal to 25 units.
-
-**Validates: Requirements 3.1, 3.3, 3.4**
-
-### Property 11: Wall Rendering Completeness
-
-*For any* game state, the number of walls rendered should equal the total number of walls in the map, regardless of player position.
-
-**Validates: Requirements 3.5**
-
-### Property 12: Wall Darkening by Distance
-
-*For any* wall rendered outside the 25-unit visibility radius, its color brightness should be reduced compared to walls within the radius.
-
-**Validates: Requirements 3.6**
-
-### Property 13: Map Data Transmission Completeness
-
-*For any* client connection, the map data packet sent by the server should contain all wall coordinates from the generated map.
-
-**Validates: Requirements 4.3**
-
-### Property 14: Player Position Transmission
-
-*For any* client connection, the server should send initial positions for all currently connected players.
-
-**Validates: Requirements 4.4**
-
-### Property 15: UDP Packet Rate
-
-*For any* 1-second time window during active gameplay, the server should send between 18-22 UDP position update packets (allowing 10% tolerance around 20 packets/second).
-
-**Validates: Requirements 4.5**
-
-### Property 16: Network Packet Structure
-
-*For any* position update packet created, it should contain non-null values for x coordinate, y coordinate, alive status, and frame ID fields.
-
-**Validates: Requirements 4.6**
-
-### Property 17: Network Culling Inclusion
-
-*For any* player within 50 units of another player, that player's data should be included in the network update packet sent to the other player.
-
-**Validates: Requirements 4.7**
-
-### Property 18: Network Culling Exclusion
-
-*For any* player beyond 50 units of another player, that player's data should be excluded from the network update packet sent to the other player.
-
-**Validates: Requirements 4.8**
-
-### Property 19: Invalid Packet Discarding
-
-*For any* network packet that fails validation (invalid coordinates, malformed data), the packet should be discarded without updating game state.
-
-**Validates: Requirements 5.4**
-
-### Property 20: Position Validation Bounds
-
-*For any* received position packet, the validation function should return false if x or y coordinates are outside the range [0, 1000].
-
-**Validates: Requirements 5.5**
-
-### Property 21: Connection Confirmation Protocol
-
-*For any* client TCP connection, a connection confirmation packet should be sent from client to server before any other communication.
-
-**Validates: Requirements 8.1**
-
-### Property 22: Ready Status Protocol
-
-*For any* client ready button click, a ready status packet should be sent to the server via TCP.
-
-**Validates: Requirements 8.3**
-
-### Property 23: Game Start Broadcast
-
-*For any* server PLAY button click, a game start signal should be sent to all connected clients via TCP.
-
-**Validates: Requirements 8.5**
-
-### Property 24: Thread-Safe Position Access
-
-*For any* concurrent read and write operations on player positions, access should be protected by mutex lock to prevent data races.
-
-**Validates: Requirements 10.1**
-
-### Property 25: Thread-Safe Map Access
-
-*For any* concurrent read and write operations on map data, access should be protected by mutex lock to prevent data races.
-
-**Validates: Requirements 10.2**
-
-### Property 26: Position Coordinate Validation
-
-*For any* position data received from network, both x and y coordinates should be validated to be within [0, 1000] range before accepting.
-
-**Validates: Requirements 10.3, 10.4**
-
-### Property 27: Invalid Coordinate Rejection
-
-*For any* position packet with coordinates outside valid range, the packet should be discarded and game state should remain unchanged.
-
-**Validates: Requirements 10.5**
-
-### Property 28: Linear Interpolation Bounds
-
-*For any* two player positions (previous and target) and interpolation alpha value in [0, 1], the interpolated position should lie on the line segment between the two positions.
-
-**Validates: Requirements 11.4**
-
-## Error Handling
-
-### Network Errors
-
-**Connection Failures:**
-- TCP connection timeout (3 seconds) triggers error screen with retry option
-- Invalid IP address format displays error message for 3 seconds
-- Connection lost detection after 2 seconds without UDP packets
-
-**Packet Validation:**
+**Валидация пакетов:**
 ```cpp
 class ErrorHandler {
 public:
     static void handleInvalidPacket(const std::string& reason) {
-        std::cerr << "[ERROR] Invalid packet: " << reason << std::endl;
-        // Packet is discarded, game continues
+        std::cerr << "[ОШИБКА] Невалидный пакет: " << reason << std::endl;
+        // Пакет отбрасывается, игра продолжается
     }
     
     static void handleConnectionLost(const std::string& serverIP) {
-        // Display reconnection screen
+        // Отобразить экран переподключения
         showReconnectScreen(serverIP);
     }
     
     static void handleMapGenerationFailure() {
-        std::cerr << "[FATAL] Failed to generate valid map after 10 attempts" << std::endl;
-        // Display error message and exit gracefully
+        std::cerr << "[КРИТИЧНО] Не удалось сгенерировать валидную карту после 10 попыток" << std::endl;
+        // Отобразить сообщение об ошибке и корректно выйти
         exit(1);
     }
 };
 ```
 
-### Game State Errors
+### Ошибки состояния игры
 
-**Collision Edge Cases:**
-- Player spawning inside wall: Push to nearest valid position
-- Multiple simultaneous collisions: Resolve in order of detection
-- Floating point precision errors: Use epsilon comparison (0.001f)
+**Граничные случаи столкновений:**
+- Спавн игрока внутри стены: Оттолкнуть к ближайшей валидной позиции
+- Множественные одновременные столкновения: Разрешить в порядке обнаружения
+- Ошибки точности с плавающей точкой: Использовать сравнение с эпсилон (0.001f)
 
-**Thread Safety:**
-- All shared state access wrapped in mutex locks
-- No direct pointer sharing between threads
-- Copy data when passing between threads
+**Потокобезопасность:**
+- Весь доступ к общему состоянию обёрнут в блокировки mutex
+- Нет прямого обмена указателями между потоками
+- Копирование данных при передаче между потоками
 
-### Performance Degradation
+### Деградация производительности
 
-**Frame Rate Monitoring:**
+**Мониторинг частоты кадров:**
 ```cpp
 class PerformanceMonitor {
 public:
@@ -783,8 +617,8 @@ public:
     
 private:
     void logPerformanceWarning(float fps) {
-        std::cerr << "[WARNING] FPS dropped to " << fps << std::endl;
-        // Log additional metrics: player count, wall count, etc.
+        std::cerr << "[ПРЕДУПРЕЖДЕНИЕ] FPS упал до " << fps << std::endl;
+        // Логировать дополнительные метрики: количество игроков, стен и т.д.
     }
     
     int frameCount_ = 0;
@@ -792,213 +626,29 @@ private:
 };
 ```
 
-## Testing Strategy
+## Примечания по реализации
 
-### Unit Testing
+### Упрощённая архитектура
 
-The project will use **Google Test (gtest)** framework for C++ unit testing. Unit tests will focus on:
+**ВАЖНО:** Весь код должен быть в двух файлах:
+- `Zero_Ground/Zero_Ground.cpp` - Весь код сервера
+- `Zero_Ground_client/Zero_Ground_client.cpp` - Весь код клиента
 
-**Core Logic Tests:**
-- Map generation algorithm (wall placement, coverage calculation)
-- BFS pathfinding validation
-- Collision detection (circle-rectangle intersection)
-- Position validation and boundary clamping
-- Packet serialization/deserialization
-- Interpolation calculations
+Все функции, структуры и классы должны быть определены внутри этих файлов. НЕ создавать отдельные заголовочные файлы или модули.
 
-**Example Unit Tests:**
-```cpp
-TEST(MapGeneratorTest, WallDimensionsAreValid) {
-    MapGenerator generator;
-    GameMap map = generator.generate();
-    
-    for (const auto& wall : map.walls) {
-        EXPECT_GE(wall.width, 2.0f);
-        EXPECT_LE(wall.width, 8.0f);
-        EXPECT_GE(wall.height, 2.0f);
-        EXPECT_LE(wall.height, 8.0f);
-    }
-}
+### Адаптация размера поля
 
-TEST(CollisionSystemTest, PlayerStopsAtWall) {
-    GameMap map;
-    map.walls.push_back(Wall{100.0f, 100.0f, 10.0f, 10.0f});
-    CollisionSystem collision(map);
-    
-    sf::Vector2f oldPos(90.0f, 105.0f);
-    sf::Vector2f newPos(110.0f, 105.0f); // Moving into wall
-    
-    sf::Vector2f result = collision.resolveCollision(oldPos, newPos, 5.0f);
-    
-    EXPECT_LT(result.x, 95.0f); // Should be pushed back
-}
+Все координаты и расчёты адаптированы для поля 500x500 единиц:
+- Границы карты: [0, 500] для x и y
+- Общая площадь: 250,000 кв. единиц
+- Точки спавна: (25, 475) для сервера, (475, 25) для клиента
+- Зоны спавна: 50x50 единиц в углах
+- Сетка BFS: 50x50 ячеек (10 единиц на ячейку)
 
-TEST(PacketValidatorTest, RejectsOutOfBoundsPosition) {
-    PositionPacket packet;
-    packet.x = 1500.0f; // Out of bounds
-    packet.y = 500.0f;
-    
-    EXPECT_FALSE(PacketValidator::validatePosition(packet));
-}
-```
+### Константы производительности
 
-### Property-Based Testing
-
-The project will use **RapidCheck** library for property-based testing in C++. Property tests will verify universal properties across randomly generated inputs.
-
-**Configuration:**
-- Minimum 100 iterations per property test
-- Each property test tagged with comment referencing design document property number
-
-**Property Test Examples:**
-
-```cpp
-// Feature: zero-ground-multiplayer-shooter, Property 1: Wall Dimensions Validity
-TEST(MapGeneratorPropertyTest, AllWallsHaveValidDimensions) {
-    rc::check("all generated walls have dimensions between 2-8 units", []() {
-        MapGenerator generator;
-        GameMap map = generator.generate();
-        
-        for (const auto& wall : map.walls) {
-            RC_ASSERT(wall.width >= 2.0f && wall.width <= 8.0f);
-            RC_ASSERT(wall.height >= 2.0f && wall.height <= 8.0f);
-        }
-    });
-}
-
-// Feature: zero-ground-multiplayer-shooter, Property 2: Map Coverage Constraint
-TEST(MapGeneratorPropertyTest, MapCoverageWithinBounds) {
-    rc::check("total wall coverage is between 25-35%", []() {
-        MapGenerator generator;
-        GameMap map = generator.generate();
-        
-        float totalArea = 0.0f;
-        for (const auto& wall : map.walls) {
-            totalArea += wall.width * wall.height;
-        }
-        
-        float coverage = totalArea / 1000000.0f;
-        RC_ASSERT(coverage >= 0.25f && coverage <= 0.35f);
-    });
-}
-
-// Feature: zero-ground-multiplayer-shooter, Property 9: Position Boundary Clamping
-TEST(PlayerMovementPropertyTest, PositionAlwaysWithinBounds) {
-    rc::check("player position is always clamped to map bounds", []() {
-        float x = *rc::gen::inRange(-100.0f, 1100.0f);
-        float y = *rc::gen::inRange(-100.0f, 1100.0f);
-        
-        sf::Vector2f pos = clampToMapBounds(sf::Vector2f(x, y));
-        
-        RC_ASSERT(pos.x >= 0.0f && pos.x <= 1000.0f);
-        RC_ASSERT(pos.y >= 0.0f && pos.y <= 1000.0f);
-    });
-}
-
-// Feature: zero-ground-multiplayer-shooter, Property 10: Visibility Radius Calculation
-TEST(FogOfWarPropertyTest, VisibilityBasedOnDistance) {
-    rc::check("entities within 25 units are visible, beyond are not", []() {
-        sf::Vector2f playerPos = *rc::gen::pair(
-            rc::gen::inRange(0.0f, 1000.0f),
-            rc::gen::inRange(0.0f, 1000.0f)
-        ).as<sf::Vector2f>();
-        
-        sf::Vector2f entityPos = *rc::gen::pair(
-            rc::gen::inRange(0.0f, 1000.0f),
-            rc::gen::inRange(0.0f, 1000.0f)
-        ).as<sf::Vector2f>();
-        
-        float distance = getDistance(playerPos, entityPos);
-        bool shouldBeVisible = distance <= 25.0f;
-        bool isVisible = checkVisibility(playerPos, entityPos, 25.0f);
-        
-        RC_ASSERT(isVisible == shouldBeVisible);
-    });
-}
-
-// Feature: zero-ground-multiplayer-shooter, Property 20: Position Validation Bounds
-TEST(NetworkPropertyTest, InvalidCoordinatesRejected) {
-    rc::check("position packets with out-of-bounds coordinates are rejected", []() {
-        PositionPacket packet;
-        packet.x = *rc::gen::inRange(-1000.0f, 2000.0f);
-        packet.y = *rc::gen::inRange(-1000.0f, 2000.0f);
-        
-        bool isValid = PacketValidator::validatePosition(packet);
-        bool shouldBeValid = (packet.x >= 0.0f && packet.x <= 1000.0f &&
-                             packet.y >= 0.0f && packet.y <= 1000.0f);
-        
-        RC_ASSERT(isValid == shouldBeValid);
-    });
-}
-
-// Feature: zero-ground-multiplayer-shooter, Property 28: Linear Interpolation Bounds
-TEST(InterpolationPropertyTest, InterpolatedPositionBetweenEndpoints) {
-    rc::check("interpolated position lies between previous and target", []() {
-        sf::Vector2f prev = *rc::gen::pair(
-            rc::gen::inRange(0.0f, 1000.0f),
-            rc::gen::inRange(0.0f, 1000.0f)
-        ).as<sf::Vector2f>();
-        
-        sf::Vector2f target = *rc::gen::pair(
-            rc::gen::inRange(0.0f, 1000.0f),
-            rc::gen::inRange(0.0f, 1000.0f)
-        ).as<sf::Vector2f>();
-        
-        float alpha = *rc::gen::inRange(0.0f, 1.0f);
-        
-        sf::Vector2f interpolated = lerp(prev, target, alpha);
-        
-        // Check if interpolated point is on line segment
-        float minX = std::min(prev.x, target.x);
-        float maxX = std::max(prev.x, target.x);
-        float minY = std::min(prev.y, target.y);
-        float maxY = std::max(prev.y, target.y);
-        
-        RC_ASSERT(interpolated.x >= minX && interpolated.x <= maxX);
-        RC_ASSERT(interpolated.y >= minY && interpolated.y <= maxY);
-    });
-}
-```
-
-### Integration Testing
-
-Integration tests will verify component interactions:
-
-**Network Integration:**
-- Server-client handshake sequence
-- Ready protocol flow (connect → ready → start)
-- Position synchronization over UDP
-- Map data transmission over TCP
-
-**Game Loop Integration:**
-- Input → Movement → Collision → Rendering pipeline
-- Network receive → State update → Rendering pipeline
-- Multi-threaded state access (UDP thread + main thread)
-
-### Performance Testing
-
-Performance tests will validate optimization requirements:
-
-**Benchmarks:**
-- Map generation time (should be < 100ms)
-- Collision detection with 100+ walls (should be < 1ms per frame)
-- Network packet serialization (should be < 0.1ms)
-- Rendering 2 players + 100 walls (should maintain 60 FPS)
-
-**Profiling:**
-- CPU usage monitoring during 2-player gameplay
-- Memory allocation tracking
-- Network bandwidth measurement
-
-### Test Execution Strategy
-
-1. **Development Phase**: Run unit tests and property tests on every build
-2. **Integration Phase**: Run integration tests after component completion
-3. **Performance Phase**: Run benchmarks and profiling before release
-4. **Continuous**: All tests run in CI pipeline on commit
-
-**Test Coverage Goals:**
-- Core logic: 90%+ code coverage
-- Network protocol: 100% property coverage
-- Collision system: 100% property coverage
-- UI state machines: 80%+ coverage
+- Радиус видимости: 25 единиц (без изменений)
+- Радиус сетевой отсечки: 50 единиц (без изменений)
+- Скорость движения: 5 единиц/секунду (без изменений)
+- Частота UDP: 20 пакетов/секунду (без изменений)
+- Целевой FPS: 55+ (без изменений)

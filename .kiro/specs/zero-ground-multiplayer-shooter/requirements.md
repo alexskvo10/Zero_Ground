@@ -1,177 +1,177 @@
-# Requirements Document
+# Документ требований
 
-## Introduction
+## Введение
 
-Zero Ground is an online 2D top-down shooter with dynamic procedurally generated maps and fog of war mechanics. The game supports multiplayer gameplay over local network using client-server architecture with SFML 2.6.1 library. The server hosts the game session and controls one player (green circle), while clients connect to play as additional players (blue circles). The game features collision detection with randomly generated walls, visibility system based on distance, and real-time network synchronization.
+Zero Ground - это онлайн 2D шутер с видом сверху, с динамически генерируемыми картами и механикой тумана войны. Игра поддерживает многопользовательский геймплей по локальной сети, используя клиент-серверную архитектуру с библиотекой SFML 2.6.1. Сервер хостит игровую сессию и управляет одним игроком (зелёный круг), в то время как клиенты подключаются для игры в качестве дополнительных игроков (синие круги). Игра включает обнаружение столкновений со случайно сгенерированными стенами, систему видимости на основе расстояния и синхронизацию в реальном времени.
 
-## Glossary
+## Глоссарий
 
-- **Server**: The host application that manages game state, generates the map, and controls the green player character
-- **Client**: The player application that connects to the Server and controls a blue player character
-- **Map**: The 1000x1000 unit game world containing walls and player spawn points, scaled to screen resolution
-- **Wall**: Rectangular obstacles that block player movement and are always visible but dimmed outside visibility radius
-- **Fog of War**: Visual obscuration system that limits player visibility to a 25-unit radius around their character
-- **Visibility Radius**: The 25-unit circular area around a player where other players and full details are visible
-- **Network Packet**: UDP data structure containing player position, alive status, and frame ID for synchronization
-- **BFS**: Breadth-First Search algorithm used to validate map connectivity between spawn points
-- **Spawn Point**: Initial player position on the map (bottom-left for server, top-right for client)
-- **HUD**: Heads-Up Display showing player health bar and kill score
-- **Collision**: Physical interaction when a player contacts a wall, resulting in immediate stop and 1-unit pushback
+- **Сервер**: Хост-приложение, которое управляет состоянием игры, генерирует карту и управляет зелёным персонажем игрока
+- **Клиент**: Приложение игрока, которое подключается к серверу и управляет синим персонажем игрока
+- **Карта**: Игровой мир размером 500x500 единиц, содержащий стены и точки спавна игроков, масштабируемый под разрешение экрана
+- **Стена**: Прямоугольные препятствия, которые блокируют движение игрока и всегда видимы, но затемнены вне радиуса видимости
+- **Туман войны**: Система визуального затемнения, которая ограничивает видимость игрока радиусом 25 единиц вокруг персонажа
+- **Радиус видимости**: Круговая область в 25 единиц вокруг игрока, где другие игроки и полные детали видимы
+- **Сетевой пакет**: UDP структура данных, содержащая позицию игрока, статус жизни и ID кадра для синхронизации
+- **BFS**: Алгоритм поиска в ширину, используемый для проверки связности карты между точками спавна
+- **Точка спавна**: Начальная позиция игрока на карте (нижний левый угол для сервера, верхний правый для клиента)
+- **HUD**: Интерфейс, показывающий полоску здоровья игрока и счёт убийств
+- **Столкновение**: Физическое взаимодействие, когда игрок контактирует со стеной, приводящее к немедленной остановке и отталкиванию на 1 единицу
 
 ## Requirements
 
-### Requirement 1: Map Generation and Validation
+### Требование 1: Генерация и валидация карты
 
-**User Story:** As a server operator, I want the system to generate a valid playable map with walls and verified connectivity, so that all players can navigate the entire game world.
+**Пользовательская история:** Как оператор сервера, я хочу, чтобы система генерировала валидную играбельную карту со стенами и проверенной связностью, чтобы все игроки могли перемещаться по всему игровому миру.
 
-#### Acceptance Criteria
+#### Критерии приёмки
 
-1. WHEN the Server starts THEN the System SHALL generate a map of 1000x1000 units scaled to the current screen resolution
-2. WHEN generating walls THEN the System SHALL create random rectangular walls with width between 2-8 units and height between 2-8 units
-3. WHEN calculating total wall coverage THEN the System SHALL ensure walls occupy between 25% and 35% of the total map area
-4. WHEN validating map connectivity THEN the System SHALL use BFS algorithm to verify a path exists between server spawn point (bottom-left) and client spawn point (top-right)
-5. IF no valid path exists between spawn points THEN the System SHALL regenerate the map with a maximum of 10 attempts
-6. WHEN all generation attempts fail THEN the System SHALL display an error message and terminate gracefully
+1. КОГДА сервер запускается, ТОГДА система ДОЛЖНА сгенерировать карту размером 500x500 единиц, масштабированную под текущее разрешение экрана
+2. КОГДА генерируются стены, ТОГДА система ДОЛЖНА создавать случайные прямоугольные стены с шириной от 2 до 8 единиц и высотой от 2 до 8 единиц
+3. КОГДА рассчитывается общее покрытие стенами, ТОГДА система ДОЛЖНА обеспечить, чтобы стены занимали от 25% до 35% общей площади карты
+4. КОГДА валидируется связность карты, ТОГДА система ДОЛЖНА использовать алгоритм BFS для проверки существования пути между точкой спавна сервера (нижний левый угол) и точкой спавна клиента (верхний правый угол)
+5. ЕСЛИ не существует валидного пути между точками спавна, ТОГДА система ДОЛЖНА перегенерировать карту с максимумом 10 попыток
+6. КОГДА все попытки генерации неудачны, ТОГДА система ДОЛЖНА отобразить сообщение об ошибке и корректно завершить работу
 
-### Requirement 2: Player Movement and Collision
+### Требование 2: Движение игрока и столкновения
 
-**User Story:** As a player, I want smooth character movement with proper collision detection, so that I can navigate the map without passing through walls.
+**Пользовательская история:** Как игрок, я хочу плавное движение персонажа с правильным обнаружением столкновений, чтобы я мог перемещаться по карте без прохождения сквозь стены.
 
-#### Acceptance Criteria
+#### Критерии приёмки
 
-1. WHEN a player presses movement keys (WASD) THEN the System SHALL update player position using float coordinates at 5 units per second
-2. WHEN the Server player presses WASD keys THEN the System SHALL move only the green circle
-3. WHEN a Client player presses WASD keys THEN the System SHALL move only that client's blue circle
-4. WHEN a player collides with a wall THEN the System SHALL immediately stop the player movement
-5. WHEN a collision occurs THEN the System SHALL push the player back by 1 unit to prevent wall clipping
-6. WHEN a player reaches map boundaries THEN the System SHALL constrain the player position within valid map coordinates
+1. КОГДА игрок нажимает клавиши движения (WASD), ТОГДА система ДОЛЖНА обновлять позицию игрока, используя координаты с плавающей точкой со скоростью 5 единиц в секунду
+2. КОГДА игрок сервера нажимает клавиши WASD, ТОГДА система ДОЛЖНА двигать только зелёный круг
+3. КОГДА игрок клиента нажимает клавиши WASD, ТОГДА система ДОЛЖНА двигать только синий круг этого клиента
+4. КОГДА игрок сталкивается со стеной, ТОГДА система ДОЛЖНА немедленно остановить движение игрока
+5. КОГДА происходит столкновение, ТОГДА система ДОЛЖНА оттолкнуть игрока на 1 единицу, чтобы предотвратить проникновение в стену
+6. КОГДА игрок достигает границ карты, ТОГДА система ДОЛЖНА ограничить позицию игрока в пределах валидных координат карты
 
-### Requirement 3: Fog of War Visibility System
+### Требование 3: Система видимости тумана войны
 
-**User Story:** As a player, I want limited visibility around my character with fog of war, so that the game has strategic depth and exploration elements.
+**Пользовательская история:** Как игрок, я хочу ограниченную видимость вокруг моего персонажа с туманом войны, чтобы игра имела стратегическую глубину и элементы исследования.
 
-#### Acceptance Criteria
+#### Критерии приёмки
 
-1. WHEN rendering the game view THEN the System SHALL display a 25-unit visibility radius around the player's character
-2. WHEN rendering areas outside visibility radius THEN the System SHALL overlay a black semi-transparent rectangle with alpha value 200
-3. WHEN another player is within 25 units THEN the System SHALL render that player fully visible
-4. WHEN another player is beyond 25 units THEN the System SHALL not render that player
-5. WHEN rendering walls THEN the System SHALL always display all walls on the map regardless of distance
-6. WHEN rendering walls outside visibility radius THEN the System SHALL apply darkening effect to those walls
+1. КОГДА отрисовывается игровой вид, ТОГДА система ДОЛЖНА отображать радиус видимости 25 единиц вокруг персонажа игрока
+2. КОГДА отрисовываются области вне радиуса видимости, ТОГДА система ДОЛЖНА накладывать чёрный полупрозрачный прямоугольник со значением альфа 200
+3. КОГДА другой игрок находится в пределах 25 единиц, ТОГДА система ДОЛЖНА отрисовать этого игрока полностью видимым
+4. КОГДА другой игрок находится за пределами 25 единиц, ТОГДА система НЕ ДОЛЖНА отрисовывать этого игрока
+5. КОГДА отрисовываются стены, ТОГДА система ДОЛЖНА всегда отображать все стены на карте независимо от расстояния
+6. КОГДА отрисовываются стены вне радиуса видимости, ТОГДА система ДОЛЖНА применять эффект затемнения к этим стенам
 
-### Requirement 4: Network Architecture and Synchronization
+### Требование 4: Сетевая архитектура и синхронизация
 
-**User Story:** As a system architect, I want reliable client-server network communication with proper state synchronization, so that all players see consistent game state.
+**Пользовательская история:** Как системный архитектор, я хочу надёжную клиент-серверную сетевую коммуникацию с правильной синхронизацией состояния, чтобы все игроки видели согласованное состояние игры.
 
-#### Acceptance Criteria
+#### Критерии приёмки
 
-1. WHEN the Server starts THEN the System SHALL bind TCP socket to port 53000 for initial connections
-2. WHEN the Server starts THEN the System SHALL bind UDP socket to port 53001 for position updates
-3. WHEN a Client connects THEN the System SHALL send complete map state including all wall coordinates via TCP
-4. WHEN a Client connects THEN the System SHALL send initial positions of all players via TCP
-5. WHEN synchronizing positions THEN the System SHALL send UDP packets at 20 packets per second
-6. WHEN creating network packets THEN the System SHALL include player x coordinate, y coordinate, alive status, and frame ID
-7. WHEN the Server detects a player within 50 units THEN the System SHALL include that player's data in network updates
-8. WHEN the Server detects a player beyond 50 units THEN the System SHALL exclude that player's data from network updates to optimize bandwidth
+1. КОГДА сервер запускается, ТОГДА система ДОЛЖНА привязать TCP сокет к порту 53000 для начальных подключений
+2. КОГДА сервер запускается, ТОГДА система ДОЛЖНА привязать UDP сокет к порту 53001 для обновлений позиций
+3. КОГДА клиент подключается, ТОГДА система ДОЛЖНА отправить полное состояние карты, включая все координаты стен через TCP
+4. КОГДА клиент подключается, ТОГДА система ДОЛЖНА отправить начальные позиции всех игроков через TCP
+5. КОГДА синхронизируются позиции, ТОГДА система ДОЛЖНА отправлять UDP пакеты с частотой 20 пакетов в секунду
+6. КОГДА создаются сетевые пакеты, ТОГДА система ДОЛЖНА включать координату x игрока, координату y, статус жизни и ID кадра
+7. КОГДА сервер обнаруживает игрока в пределах 50 единиц, ТОГДА система ДОЛЖНА включать данные этого игрока в сетевые обновления
+8. КОГДА сервер обнаруживает игрока за пределами 50 единиц, ТОГДА система ДОЛЖНА исключать данные этого игрока из сетевых обновлений для оптимизации пропускной способности
 
-### Requirement 5: Connection Management and Error Handling
+### Требование 5: Управление подключением и обработка ошибок
 
-**User Story:** As a player, I want clear feedback about connection status and ability to reconnect, so that I can recover from network issues.
+**Пользовательская история:** Как игрок, я хочу чёткую обратную связь о статусе подключения и возможность переподключиться, чтобы я мог восстановиться после сетевых проблем.
 
-#### Acceptance Criteria
+#### Критерии приёмки
 
-1. WHEN a Client loses connection for more than 2 seconds THEN the System SHALL display "Connection lost. Press R to reconnect to [IP]" message
-2. WHEN a Client presses R on the reconnection screen THEN the System SHALL attempt to reconnect to the last known server IP address
-3. WHEN a Client attempts connection to an invalid IP THEN the System SHALL display "Server unavailable. Check IP and try again" in red text for 3 seconds
-4. WHEN network packets fail validation THEN the System SHALL discard invalid packets and log the error
-5. WHEN validating received position data THEN the System SHALL verify x and y coordinates are within map bounds (0-1000)
+1. КОГДА клиент теряет соединение более чем на 2 секунды, ТОГДА система ДОЛЖНА отобразить сообщение "Соединение потеряно. Нажмите R для переподключения к [IP]"
+2. КОГДА клиент нажимает R на экране переподключения, ТОГДА система ДОЛЖНА попытаться переподключиться к последнему известному IP адресу сервера
+3. КОГДА клиент пытается подключиться к невалидному IP, ТОГДА система ДОЛЖНА отобразить "Сервер недоступен. Проверьте IP и попробуйте снова" красным текстом на 3 секунды
+4. КОГДА сетевые пакеты не проходят валидацию, ТОГДА система ДОЛЖНА отбросить невалидные пакеты и залогировать ошибку
+5. КОГДА валидируются полученные данные позиции, ТОГДА система ДОЛЖНА проверить, что координаты x и y находятся в пределах границ карты (0-500)
 
-### Requirement 6: Server User Interface and Player Readiness
+### Требование 6: Пользовательский интерфейс сервера и готовность игрока
 
-**User Story:** As a server operator, I want a clear interface showing server status, connection information, and player readiness state, so that I can coordinate game start with connected players.
+**Пользовательская история:** Как оператор сервера, я хочу чёткий интерфейс, показывающий статус сервера, информацию о подключении и состояние готовности игрока, чтобы я мог координировать старт игры с подключёнными игроками.
 
-#### Acceptance Criteria
+#### Критерии приёмки
 
-1. WHEN the Server application starts THEN the System SHALL display a start screen in fullscreen mode
-2. WHEN displaying the start screen THEN the System SHALL show "SERVER STARTED" text in green at 64pt font size
-3. WHEN displaying the start screen THEN the System SHALL show "Server IP: [actual local IP]" text in white at 32pt font size
-4. IF the local IP is 127.0.0.1 or 0.0.0.0 THEN the System SHALL display "IP not available" instead of the IP address
-5. WHEN displaying the start screen THEN the System SHALL show "Waiting for player..." text in white at 28pt font size
-6. WHEN a Client successfully connects THEN the System SHALL replace "Waiting for player..." with "Player connected but not ready" text in yellow at 28pt font size
-7. WHEN the connected Client clicks the Ready button THEN the System SHALL replace the status text with "Player connected and ready to play" in green at 28pt font size
-8. WHEN the player status shows ready THEN the System SHALL display a green "PLAY" button sized 200x60 pixels
-9. WHEN the operator clicks the PLAY button THEN the System SHALL send game start signal to all clients and transition to the main game screen
-10. WHEN the operator presses Escape key THEN the System SHALL toggle between fullscreen and windowed mode
+1. КОГДА приложение сервера запускается, ТОГДА система ДОЛЖНА отобразить стартовый экран в полноэкранном режиме
+2. КОГДА отображается стартовый экран, ТОГДА система ДОЛЖНА показать текст "СЕРВЕР ЗАПУЩЕН" зелёным цветом размером 64pt
+3. КОГДА отображается стартовый экран, ТОГДА система ДОЛЖНА показать текст "IP сервера: [реальный локальный IP]" белым цветом размером 32pt
+4. ЕСЛИ локальный IP 127.0.0.1 или 0.0.0.0, ТОГДА система ДОЛЖНА отобразить "IP недоступен" вместо IP адреса
+5. КОГДА отображается стартовый экран, ТОГДА система ДОЛЖНА показать текст "Ожидание игрока..." белым цветом размером 28pt
+6. КОГДА клиент успешно подключается, ТОГДА система ДОЛЖНА заменить "Ожидание игрока..." на текст "Игрок подключён, но не готов" жёлтым цветом размером 28pt
+7. КОГДА подключённый клиент нажимает кнопку Готов, ТОГДА система ДОЛЖНА заменить текст статуса на "Игрок подключён и готов играть" зелёным цветом размером 28pt
+8. КОГДА статус игрока показывает готовность, ТОГДА система ДОЛЖНА отобразить зелёную кнопку "ИГРАТЬ" размером 200x60 пикселей
+9. КОГДА оператор нажимает кнопку ИГРАТЬ, ТОГДА система ДОЛЖНА отправить сигнал старта игры всем клиентам и перейти на главный игровой экран
+10. КОГДА оператор нажимает клавишу Escape, ТОГДА система ДОЛЖНА переключаться между полноэкранным и оконным режимом
 
-### Requirement 7: Client User Interface and Ready System
+### Требование 7: Пользовательский интерфейс клиента и система готовности
 
-**User Story:** As a client player, I want an intuitive connection interface with ready confirmation, so that I can coordinate game start with the server.
+**Пользовательская история:** Как игрок клиента, я хочу интуитивный интерфейс подключения с подтверждением готовности, чтобы я мог координировать старт игры с сервером.
 
-#### Acceptance Criteria
+#### Критерии приёмки
 
-1. WHEN the Client application starts THEN the System SHALL display a connection screen in fullscreen mode
-2. WHEN displaying the connection screen THEN the System SHALL show "SERVER IP ADDRESS:" label in white at 32pt font size
-3. WHEN displaying the connection screen THEN the System SHALL show an input field sized 400x50 pixels with dark gray background
-4. WHEN the input field is focused THEN the System SHALL change the outline color to green with 3-pixel thickness
-5. WHEN the user types in the input field THEN the System SHALL accept only digits (0-9) and dots (.)
-6. WHEN the user presses Backspace in the input field THEN the System SHALL remove the last character
-7. WHEN the input field contains text THEN the System SHALL limit input to maximum 15 characters
-8. WHEN displaying the connection screen THEN the System SHALL show a green "CONNECT TO SERVER" button sized 300x70 pixels
-9. WHEN the user clicks the connect button or presses Enter THEN the System SHALL attempt TCP connection to the entered IP address on port 53000 with 3-second timeout
-10. WHEN connection fails THEN the System SHALL display "SERVER UNAVAILABLE OR INVALID IP" in red text for 3 seconds
-11. WHEN connection succeeds THEN the System SHALL display "Connection established" text in green at 32pt font size
-12. WHEN connection succeeds THEN the System SHALL display a green "READY" button sized 200x60 pixels
-13. WHEN the user clicks the READY button THEN the System SHALL send ready status to the Server
-14. WHEN the ready status is sent THEN the System SHALL replace the READY button with "Waiting for game start..." text in yellow at 28pt font size
-15. WHEN the Server sends game start signal THEN the System SHALL transition to the main game screen
-16. WHEN the user presses Escape key THEN the System SHALL toggle between fullscreen and windowed mode
+1. КОГДА приложение клиента запускается, ТОГДА система ДОЛЖНА отобразить экран подключения в полноэкранном режиме
+2. КОГДА отображается экран подключения, ТОГДА система ДОЛЖНА показать метку "IP АДРЕС СЕРВЕРА:" белым цветом размером 32pt
+3. КОГДА отображается экран подключения, ТОГДА система ДОЛЖНА показать поле ввода размером 400x50 пикселей с тёмно-серым фоном
+4. КОГДА поле ввода в фокусе, ТОГДА система ДОЛЖНА изменить цвет обводки на зелёный с толщиной 3 пикселя
+5. КОГДА пользователь печатает в поле ввода, ТОГДА система ДОЛЖНА принимать только цифры (0-9) и точки (.)
+6. КОГДА пользователь нажимает Backspace в поле ввода, ТОГДА система ДОЛЖНА удалить последний символ
+7. КОГДА поле ввода содержит текст, ТОГДА система ДОЛЖНА ограничить ввод максимум 15 символами
+8. КОГДА отображается экран подключения, ТОГДА система ДОЛЖНА показать зелёную кнопку "ПОДКЛЮЧИТЬСЯ К СЕРВЕРУ" размером 300x70 пикселей
+9. КОГДА пользователь нажимает кнопку подключения или нажимает Enter, ТОГДА система ДОЛЖНА попытаться установить TCP подключение к введённому IP адресу на порту 53000 с таймаутом 3 секунды
+10. КОГДА подключение неудачно, ТОГДА система ДОЛЖНА отобразить "СЕРВЕР НЕДОСТУПЕН ИЛИ НЕВАЛИДНЫЙ IP" красным текстом на 3 секунды
+11. КОГДА подключение успешно, ТОГДА система ДОЛЖНА отобразить текст "Соединение установлено" зелёным цветом размером 32pt
+12. КОГДА подключение успешно, ТОГДА система ДОЛЖНА отобразить зелёную кнопку "ГОТОВ" размером 200x60 пикселей
+13. КОГДА пользователь нажимает кнопку ГОТОВ, ТОГДА система ДОЛЖНА отправить статус готовности серверу
+14. КОГДА статус готовности отправлен, ТОГДА система ДОЛЖНА заменить кнопку ГОТОВ на текст "Ожидание старта игры..." жёлтым цветом размером 28pt
+15. КОГДА сервер отправляет сигнал старта игры, ТОГДА система ДОЛЖНА перейти на главный игровой экран
+16. КОГДА пользователь нажимает клавишу Escape, ТОГДА система ДОЛЖНА переключаться между полноэкранным и оконным режимом
 
-### Requirement 8: Player Ready Protocol
+### Требование 8: Протокол готовности игрока
 
-**User Story:** As a system architect, I want a reliable ready-check protocol between server and clients, so that the game starts only when all players are prepared.
+**Пользовательская история:** Как системный архитектор, я хочу надёжный протокол проверки готовности между сервером и клиентами, чтобы игра начиналась только когда все игроки подготовлены.
 
-#### Acceptance Criteria
+#### Критерии приёмки
 
-1. WHEN a Client connects via TCP THEN the System SHALL send a connection confirmation packet to the Server
-2. WHEN the Server receives connection confirmation THEN the System SHALL update the server UI to show player connected status
-3. WHEN a Client clicks the READY button THEN the System SHALL send a ready status packet to the Server via TCP
-4. WHEN the Server receives ready status THEN the System SHALL update the server UI to show player ready status
-5. WHEN the Server operator clicks PLAY button THEN the System SHALL send game start signal to all connected clients via TCP
-6. WHEN a Client receives game start signal THEN the System SHALL load the map data and transition to game screen
-7. WHEN the Server sends game start signal THEN the System SHALL transition to game screen simultaneously with clients
+1. КОГДА клиент подключается через TCP, ТОГДА система ДОЛЖНА отправить пакет подтверждения подключения серверу
+2. КОГДА сервер получает подтверждение подключения, ТОГДА система ДОЛЖНА обновить UI сервера для отображения статуса подключённого игрока
+3. КОГДА клиент нажимает кнопку ГОТОВ, ТОГДА система ДОЛЖНА отправить пакет статуса готовности серверу через TCP
+4. КОГДА сервер получает статус готовности, ТОГДА система ДОЛЖНА обновить UI сервера для отображения статуса готовности игрока
+5. КОГДА оператор сервера нажимает кнопку ИГРАТЬ, ТОГДА система ДОЛЖНА отправить сигнал старта игры всем подключённым клиентам через TCP
+6. КОГДА клиент получает сигнал старта игры, ТОГДА система ДОЛЖНА загрузить данные карты и перейти на игровой экран
+7. КОГДА сервер отправляет сигнал старта игры, ТОГДА система ДОЛЖНА перейти на игровой экран одновременно с клиентами
 
-### Requirement 9: Game HUD and Visual Feedback
+### Требование 9: Игровой HUD и визуальная обратная связь
 
-**User Story:** As a player, I want to see my health status and game score, so that I can track my performance during gameplay.
+**Пользовательская история:** Как игрок, я хочу видеть статус моего здоровья и игровой счёт, чтобы я мог отслеживать свою производительность во время игры.
 
-#### Acceptance Criteria
+#### Критерии приёмки
 
-1. WHEN rendering the game screen THEN the System SHALL display a health bar above the player character
-2. WHEN the player has 100 HP THEN the System SHALL render the health bar as a green rectangle
-3. WHEN the player health decreases THEN the System SHALL reduce the health bar width proportionally
-4. WHEN rendering the game screen THEN the System SHALL display "Score: [number]" text in the top-left corner
-5. WHEN a player dies THEN the System SHALL apply full-screen darkening effect
+1. КОГДА отрисовывается игровой экран, ТОГДА система ДОЛЖНА отображать полоску здоровья над персонажем игрока
+2. КОГДА у игрока 100 HP, ТОГДА система ДОЛЖНА отрисовать полоску здоровья как зелёный прямоугольник
+3. КОГДА здоровье игрока уменьшается, ТОГДА система ДОЛЖНА пропорционально уменьшить ширину полоски здоровья
+4. КОГДА отрисовывается игровой экран, ТОГДА система ДОЛЖНА отображать текст "Счёт: [число]" в верхнем левом углу
+5. КОГДА игрок умирает, ТОГДА система ДОЛЖНА применить эффект затемнения всего экрана
 
-### Requirement 10: Thread Safety and Data Validation
+### Требование 10: Потокобезопасность и валидация данных
 
-**User Story:** As a system architect, I want thread-safe access to shared game state and validated network data, so that the application remains stable under concurrent operations.
+**Пользовательская история:** Как системный архитектор, я хочу потокобезопасный доступ к общему состоянию игры и валидированные сетевые данные, чтобы приложение оставалось стабильным при конкурентных операциях.
 
-#### Acceptance Criteria
+#### Критерии приёмки
 
-1. WHEN accessing shared player positions THEN the System SHALL use std::mutex to protect concurrent read and write operations
-2. WHEN accessing shared map data THEN the System SHALL use std::mutex to protect concurrent read and write operations
-3. WHEN receiving network position data THEN the System SHALL validate x coordinate is between 0 and 1000
-4. WHEN receiving network position data THEN the System SHALL validate y coordinate is between 0 and 1000
-5. IF received coordinates are outside valid range THEN the System SHALL discard the packet and continue processing
+1. КОГДА осуществляется доступ к общим позициям игроков, ТОГДА система ДОЛЖНА использовать std::mutex для защиты конкурентных операций чтения и записи
+2. КОГДА осуществляется доступ к общим данным карты, ТОГДА система ДОЛЖНА использовать std::mutex для защиты конкурентных операций чтения и записи
+3. КОГДА получаются сетевые данные позиции, ТОГДА система ДОЛЖНА валидировать, что координата x находится между 0 и 500
+4. КОГДА получаются сетевые данные позиции, ТОГДА система ДОЛЖНА валидировать, что координата y находится между 0 и 500
+5. ЕСЛИ полученные координаты находятся вне валидного диапазона, ТОГДА система ДОЛЖНА отбросить пакет и продолжить обработку
 
-### Requirement 11: Performance and Optimization
+### Требование 11: Производительность и оптимизация
 
-**User Story:** As a player, I want smooth gameplay with consistent frame rate, so that I have a responsive gaming experience.
+**Пользовательская история:** Как игрок, я хочу плавный геймплей с постоянной частотой кадров, чтобы у меня был отзывчивый игровой опыт.
 
-#### Acceptance Criteria
+#### Критерии приёмки
 
-1. WHEN running on a system with Intel i3-8100 and 8GB RAM THEN the System SHALL maintain minimum 55 FPS
-2. WHEN two players are connected THEN the System SHALL use less than 40% CPU
-3. WHEN detecting collisions THEN the System SHALL use spatial partitioning (quadtree) for optimization
-4. WHEN rendering player movement THEN the System SHALL use linear interpolation between previous and target positions for smooth animation
-5. WHEN the frame rate drops below 55 FPS THEN the System SHALL log performance metrics for debugging
+1. КОГДА запускается на системе с Intel i3-8100 и 8GB RAM, ТОГДА система ДОЛЖНА поддерживать минимум 55 FPS
+2. КОГДА подключены два игрока, ТОГДА система ДОЛЖНА использовать менее 40% CPU
+3. КОГДА обнаруживаются столкновения, ТОГДА система ДОЛЖНА использовать пространственное разбиение (quadtree) для оптимизации
+4. КОГДА отрисовывается движение игрока, ТОГДА система ДОЛЖНА использовать линейную интерполяцию между предыдущей и целевой позициями для плавной анимации
+5. КОГДА частота кадров падает ниже 55 FPS, ТОГДА система ДОЛЖНА логировать метрики производительности для отладки
