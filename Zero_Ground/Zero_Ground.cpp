@@ -91,6 +91,108 @@ struct Cell {
 };
 
 // ========================
+// Error Handling and Logging Functions
+// ========================
+
+class ErrorHandler {
+public:
+    // Handle invalid packet errors
+    static void handleInvalidPacket(const std::string& reason, const std::string& source = "") {
+        std::cerr << "[ERROR] Invalid packet received";
+        if (!source.empty()) {
+            std::cerr << " from " << source;
+        }
+        std::cerr << ": " << reason << std::endl;
+        std::cerr << "[INFO] Packet discarded, continuing operation" << std::endl;
+    }
+    
+    // Handle connection loss
+    static void handleConnectionLost(const std::string& clientIP) {
+        std::cerr << "[ERROR] Connection lost with client: " << clientIP << std::endl;
+        std::cerr << "[INFO] Client will need to reconnect" << std::endl;
+    }
+    
+    // Handle map generation failure
+    static void handleMapGenerationFailure() {
+        std::cerr << "\n========================================" << std::endl;
+        std::cerr << "[CRITICAL ERROR] Map Generation Failed" << std::endl;
+        std::cerr << "========================================" << std::endl;
+        std::cerr << "Failed to generate a valid map after 10 attempts." << std::endl;
+        std::cerr << "The map generation algorithm could not create a map" << std::endl;
+        std::cerr << "where both spawn points are reachable from each other." << std::endl;
+        std::cerr << "\nPossible causes:" << std::endl;
+        std::cerr << "  - Too many walls blocking paths" << std::endl;
+        std::cerr << "  - Random generation created isolated areas" << std::endl;
+        std::cerr << "\nAction required:" << std::endl;
+        std::cerr << "  - Restart the server to try again" << std::endl;
+        std::cerr << "  - If problem persists, adjust wall generation probabilities" << std::endl;
+        std::cerr << "========================================\n" << std::endl;
+        
+        // Exit with error code
+        exit(1);
+    }
+    
+    // Log network errors
+    static void logNetworkError(const std::string& operation, const std::string& details = "") {
+        std::cerr << "[NETWORK ERROR] Operation: " << operation;
+        if (!details.empty()) {
+            std::cerr << " - Details: " << details;
+        }
+        std::cerr << std::endl;
+    }
+    
+    // Log TCP errors
+    static void logTCPError(const std::string& operation, sf::Socket::Status status, const std::string& clientIP = "") {
+        std::cerr << "[TCP ERROR] Operation: " << operation;
+        if (!clientIP.empty()) {
+            std::cerr << " - Client: " << clientIP;
+        }
+        std::cerr << " - Status: ";
+        
+        switch (status) {
+            case sf::Socket::Done:
+                std::cerr << "Done (unexpected in error handler)";
+                break;
+            case sf::Socket::NotReady:
+                std::cerr << "Not Ready";
+                break;
+            case sf::Socket::Partial:
+                std::cerr << "Partial";
+                break;
+            case sf::Socket::Disconnected:
+                std::cerr << "Disconnected";
+                break;
+            case sf::Socket::Error:
+                std::cerr << "Error";
+                break;
+            default:
+                std::cerr << "Unknown";
+                break;
+        }
+        std::cerr << std::endl;
+    }
+    
+    // Log UDP errors
+    static void logUDPError(const std::string& operation, const std::string& details = "") {
+        std::cerr << "[UDP ERROR] Operation: " << operation;
+        if (!details.empty()) {
+            std::cerr << " - Details: " << details;
+        }
+        std::cerr << std::endl;
+    }
+    
+    // Log general info
+    static void logInfo(const std::string& message) {
+        std::cout << "[INFO] " << message << std::endl;
+    }
+    
+    // Log warnings
+    static void logWarning(const std::string& message) {
+        std::cerr << "[WARNING] " << message << std::endl;
+    }
+};
+
+// ========================
 // NEW: Cell-Based Map Generation Functions
 // ========================
 
@@ -395,7 +497,7 @@ struct Quadtree {
             walls.push_back(wall);
             
             // Check if we need to subdivide
-            if (walls.size() > MAX_WALLS && depth < MAX_DEPTH) {
+            if (walls.size() > static_cast<size_t>(MAX_WALLS) && depth < MAX_DEPTH) {
                 subdivide();
                 
                 // Redistribute walls to children
@@ -515,108 +617,6 @@ struct PositionPacket {
     bool isAlive = true;
     uint32_t frameID = 0;
     uint8_t playerId = 0;
-};
-
-// ========================
-// Error Handling and Logging Functions
-// ========================
-
-class ErrorHandler {
-public:
-    // Handle invalid packet errors
-    static void handleInvalidPacket(const std::string& reason, const std::string& source = "") {
-        std::cerr << "[ERROR] Invalid packet received";
-        if (!source.empty()) {
-            std::cerr << " from " << source;
-        }
-        std::cerr << ": " << reason << std::endl;
-        std::cerr << "[INFO] Packet discarded, continuing operation" << std::endl;
-    }
-    
-    // Handle connection loss
-    static void handleConnectionLost(const std::string& clientIP) {
-        std::cerr << "[ERROR] Connection lost with client: " << clientIP << std::endl;
-        std::cerr << "[INFO] Client will need to reconnect" << std::endl;
-    }
-    
-    // Handle map generation failure
-    static void handleMapGenerationFailure() {
-        std::cerr << "\n========================================" << std::endl;
-        std::cerr << "[CRITICAL ERROR] Map Generation Failed" << std::endl;
-        std::cerr << "========================================" << std::endl;
-        std::cerr << "Failed to generate a valid map after 10 attempts." << std::endl;
-        std::cerr << "The map generation algorithm could not create a map" << std::endl;
-        std::cerr << "where both spawn points are reachable from each other." << std::endl;
-        std::cerr << "\nPossible causes:" << std::endl;
-        std::cerr << "  - Too many walls blocking paths" << std::endl;
-        std::cerr << "  - Random generation created isolated areas" << std::endl;
-        std::cerr << "\nAction required:" << std::endl;
-        std::cerr << "  - Restart the server to try again" << std::endl;
-        std::cerr << "  - If problem persists, adjust wall generation probabilities" << std::endl;
-        std::cerr << "========================================\n" << std::endl;
-        
-        // Exit with error code
-        exit(1);
-    }
-    
-    // Log network errors
-    static void logNetworkError(const std::string& operation, const std::string& details = "") {
-        std::cerr << "[NETWORK ERROR] Operation: " << operation;
-        if (!details.empty()) {
-            std::cerr << " - Details: " << details;
-        }
-        std::cerr << std::endl;
-    }
-    
-    // Log TCP errors
-    static void logTCPError(const std::string& operation, sf::Socket::Status status, const std::string& clientIP = "") {
-        std::cerr << "[TCP ERROR] Operation: " << operation;
-        if (!clientIP.empty()) {
-            std::cerr << " - Client: " << clientIP;
-        }
-        std::cerr << " - Status: ";
-        
-        switch (status) {
-            case sf::Socket::Done:
-                std::cerr << "Done (unexpected in error handler)";
-                break;
-            case sf::Socket::NotReady:
-                std::cerr << "Not Ready";
-                break;
-            case sf::Socket::Partial:
-                std::cerr << "Partial";
-                break;
-            case sf::Socket::Disconnected:
-                std::cerr << "Disconnected";
-                break;
-            case sf::Socket::Error:
-                std::cerr << "Error";
-                break;
-            default:
-                std::cerr << "Unknown";
-                break;
-        }
-        std::cerr << std::endl;
-    }
-    
-    // Log UDP errors
-    static void logUDPError(const std::string& operation, const std::string& details = "") {
-        std::cerr << "[UDP ERROR] Operation: " << operation;
-        if (!details.empty()) {
-            std::cerr << " - Details: " << details;
-        }
-        std::cerr << std::endl;
-    }
-    
-    // Log general info
-    static void logInfo(const std::string& message) {
-        std::cout << "[INFO] " << message << std::endl;
-    }
-    
-    // Log warnings
-    static void logWarning(const std::string& message) {
-        std::cerr << "[WARNING] " << message << std::endl;
-    }
 };
 
 // ========================
@@ -1727,7 +1727,7 @@ void applyFogOverlay(sf::RenderWindow& window, sf::Vector2f playerScreenPos, flo
     fogTexture.clear(sf::Color::Transparent);
     
     // Draw full-screen fog
-    sf::RectangleShape fullFog(sf::Vector2f(windowSize.x, windowSize.y));
+    sf::RectangleShape fullFog(sf::Vector2f(static_cast<float>(windowSize.x), static_cast<float>(windowSize.y)));
     fullFog.setFillColor(sf::Color(0, 0, 0, 200)); // Black with alpha 200
     fogTexture.draw(fullFog);
     
@@ -2184,6 +2184,9 @@ int main() {
     sf::VideoMode desktopMode = sf::VideoMode::getDesktopMode();
     sf::RenderWindow window(desktopMode, "Server", sf::Style::Fullscreen);
     window.setFramerateLimit(60);
+    
+    // Store window size for later use
+    sf::Vector2u windowSize = window.getSize();
 
     sf::Font font;
     if (!font.loadFromFile("arial.ttf")) {
@@ -2268,29 +2271,29 @@ int main() {
 
     // Function to center UI elements on window resize
     auto centerElements = [&]() {
-        sf::Vector2u windowSize = window.getSize();
+        sf::Vector2u winSize = window.getSize();
 
         // Center "СЕРВЕР ЗАПУЩЕН" text
-        startText.setPosition(windowSize.x / 2 - startText.getLocalBounds().width / 2,
-            windowSize.y / 2 - 150);
+        startText.setPosition(static_cast<float>(winSize.x) / 2.0f - startText.getLocalBounds().width / 2.0f,
+            static_cast<float>(winSize.y) / 2.0f - 150.0f);
 
         // Center "IP сервера:" text
-        ipText.setPosition(windowSize.x / 2 - ipText.getLocalBounds().width / 2,
-            windowSize.y / 2 - 50);
+        ipText.setPosition(static_cast<float>(winSize.x) / 2.0f - ipText.getLocalBounds().width / 2.0f,
+            static_cast<float>(winSize.y) / 2.0f - 50.0f);
 
         // Center status text (will be updated dynamically)
-        statusText.setPosition(windowSize.x / 2 - statusText.getLocalBounds().width / 2,
-            windowSize.y / 2 + 20);
+        statusText.setPosition(static_cast<float>(winSize.x) / 2.0f - statusText.getLocalBounds().width / 2.0f,
+            static_cast<float>(winSize.y) / 2.0f + 20.0f);
 
         // Center NEXT button (legacy, not used in final version)
-        nextButton.setPosition(windowSize.x / 2 - 100, windowSize.y / 2 + 100);
-        buttonText.setPosition(windowSize.x / 2 - buttonText.getLocalBounds().width / 2,
-            windowSize.y / 2 + 100 + 10);
+        nextButton.setPosition(static_cast<float>(winSize.x) / 2.0f - 100.0f, static_cast<float>(winSize.y) / 2.0f + 100.0f);
+        buttonText.setPosition(static_cast<float>(winSize.x) / 2.0f - buttonText.getLocalBounds().width / 2.0f,
+            static_cast<float>(winSize.y) / 2.0f + 100.0f + 10.0f);
             
         // Center PLAY button
-        playButton.setPosition(windowSize.x / 2 - 100, windowSize.y / 2 + 100);
-        playButtonText.setPosition(windowSize.x / 2 - playButtonText.getLocalBounds().width / 2,
-            windowSize.y / 2 + 100 + 10);
+        playButton.setPosition(static_cast<float>(winSize.x) / 2.0f - 100.0f, static_cast<float>(winSize.y) / 2.0f + 100.0f);
+        playButtonText.setPosition(static_cast<float>(winSize.x) / 2.0f - playButtonText.getLocalBounds().width / 2.0f,
+            static_cast<float>(winSize.y) / 2.0f + 100.0f + 10.0f);
         };
 
     centerElements();
@@ -2376,8 +2379,8 @@ int main() {
                 std::lock_guard<std::mutex> lock(clientsMutex);
                 statusText.setString(connectionStatus);
                 statusText.setFillColor(connectionStatusColor);
-                statusText.setPosition(window.getSize().x / 2 - statusText.getLocalBounds().width / 2,
-                    window.getSize().y / 2 + 20);
+                statusText.setPosition(static_cast<float>(window.getSize().x) / 2.0f - statusText.getLocalBounds().width / 2.0f,
+                    static_cast<float>(window.getSize().y) / 2.0f + 20.0f);
             }
             
             window.draw(startText);
@@ -2517,7 +2520,7 @@ int main() {
             
             // Apply screen darkening effect if server player is dead
             if (!serverIsAlive) {
-                sf::RectangleShape deathOverlay(sf::Vector2f(windowSize.x, windowSize.y));
+                sf::RectangleShape deathOverlay(sf::Vector2f(static_cast<float>(windowSize.x), static_cast<float>(windowSize.y)));
                 deathOverlay.setFillColor(sf::Color(0, 0, 0, 180)); // Dark semi-transparent overlay
                 window.draw(deathOverlay);
             }
