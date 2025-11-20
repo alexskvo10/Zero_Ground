@@ -470,9 +470,9 @@ void generateWalls(GameMap& map) {
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_real_distribution<float> posDist(50.0f, 450.0f); // Avoid edges
-    std::uniform_real_distribution<float> lengthDist(3.0f, 20.0f); // Wall length 3-20
+    std::uniform_real_distribution<float> lengthDist(8.0f, 60.0f); // Wall length 8-60 pixels
+    std::uniform_real_distribution<float> thicknessDist(8.0f, 12.0f); // Wall thickness 8-12 pixels
     std::uniform_int_distribution<int> orientationDist(0, 1); // 0=horizontal, 1=vertical
-    const float wallThickness = 3.0f; // Thickness of walls
     
     // Generate 15-25 random walls
     std::uniform_int_distribution<int> wallCountDist(15, 25);
@@ -481,6 +481,7 @@ void generateWalls(GameMap& map) {
     for (int i = 0; i < numWalls; ++i) {
         Wall wall;
         float length = lengthDist(gen);
+        float thickness = thicknessDist(gen);
         int orientation = orientationDist(gen);
         
         wall.x = posDist(gen);
@@ -489,10 +490,10 @@ void generateWalls(GameMap& map) {
         if (orientation == 0) {
             // Horizontal wall
             wall.width = length;
-            wall.height = wallThickness;
+            wall.height = thickness;
         } else {
             // Vertical wall
-            wall.width = wallThickness;
+            wall.width = thickness;
             wall.height = length;
         }
         
@@ -775,16 +776,26 @@ sf::Vector2f resolveCollision(sf::Vector2f oldPos, sf::Vector2f newPos, float ra
         
         for (const Wall* wall : nearbyWalls) {
             if (circleRectCollision(newPos, radius, *wall)) {
-                // Push back 1 unit in the opposite direction
-                sf::Vector2f direction = oldPos - newPos;
-                float length = std::sqrt(direction.x * direction.x + direction.y * direction.y);
+                // Calculate penetration depth and push back
+                float closestX = std::max(wall->x, std::min(newPos.x, wall->x + wall->width));
+                float closestY = std::max(wall->y, std::min(newPos.y, wall->y + wall->height));
                 
-                if (length > 0.001f) {
-                    direction /= length;
-                    result = oldPos + direction * 1.0f;
-                } else {
-                    result = oldPos; // No movement if already in collision
+                float dx = newPos.x - closestX;
+                float dy = newPos.y - closestY;
+                float distance = std::sqrt(dx * dx + dy * dy);
+                
+                if (distance < 0.001f) {
+                    // Player is exactly on the wall edge, use old position
+                    result = oldPos;
+                    break;
                 }
+                
+                // Calculate how much to push back (radius - distance)
+                float penetration = radius - distance;
+                float pushX = (dx / distance) * penetration;
+                float pushY = (dy / distance) * penetration;
+                
+                result = sf::Vector2f(newPos.x + pushX, newPos.y + pushY);
                 break;
             }
         }
@@ -915,8 +926,8 @@ private:
 // Movement and Interpolation Constants
 // ========================
 
-const float MOVEMENT_SPEED = 5.0f; // 5 units per second
-const float VISIBILITY_RADIUS = 25.0f; // 25 units visibility radius
+const float MOVEMENT_SPEED = 3.0f; // 3 units per second
+const float VISIBILITY_RADIUS = 50.0f; // 50 units visibility radius
 
 // Linear interpolation function for smooth position transitions
 float lerp(float start, float end, float alpha) {
@@ -966,7 +977,8 @@ void renderFogOfWar(sf::RenderWindow& window, sf::Vector2f playerPos,
             wallShape.setFillColor(sf::Color(150, 150, 150)); // Normal gray
         }
         
-        wallShape.setOutlineColor(sf::Color(100, 100, 100));
+        // Add outline to see exact hitbox
+        wallShape.setOutlineColor(sf::Color(200, 200, 200));
         wallShape.setOutlineThickness(1.0f);
         window.draw(wallShape);
     }
@@ -1548,11 +1560,11 @@ int main() {
     playButtonText.setFillColor(sf::Color::White);
 
     // �������� ��������� ������
-    sf::CircleShape serverCircle(30.0f);
+    sf::CircleShape serverCircle(10.0f);
     serverCircle.setFillColor(sf::Color::Green);
     serverCircle.setOutlineColor(sf::Color(0, 100, 0));
     serverCircle.setOutlineThickness(3.0f);
-    serverCircle.setPosition(serverPos.x - 30.0f, serverPos.y - 30.0f);
+    serverCircle.setPosition(serverPos.x - 10.0f, serverPos.y - 10.0f);
 
     std::map<sf::IpAddress, sf::CircleShape> clientCircles;
     
@@ -1711,8 +1723,8 @@ int main() {
                 if (sf::Keyboard::isKeyPressed(sf::Keyboard::A)) newPos.x -= MOVEMENT_SPEED * deltaTime * 60.0f;
                 if (sf::Keyboard::isKeyPressed(sf::Keyboard::D)) newPos.x += MOVEMENT_SPEED * deltaTime * 60.0f;
                 
-                // Apply collision detection with walls
-                const float playerRadius = 30.0f;
+                // Apply collision detection with walls (radius 10px - matches visual size)
+                const float playerRadius = 10.0f;
                 newPos = resolveCollision(oldPos, newPos, playerRadius, gameMap, &perfMonitor);
                 
                 // Clamp to map boundaries [0, 500]
@@ -1738,7 +1750,7 @@ int main() {
             float scaleX = windowSize.x / 500.0f;
             float scaleY = windowSize.y / 500.0f;
             
-            serverCircle.setPosition(renderPos.x * scaleX - 30.0f, renderPos.y * scaleY - 30.0f);
+            serverCircle.setPosition(renderPos.x * scaleX - 10.0f, renderPos.y * scaleY - 10.0f);
 
             // Update and render connected clients with interpolation
             {
@@ -1752,7 +1764,7 @@ int main() {
                     Position pos = pair.second;
 
                     if (clientCircles.find(ip) == clientCircles.end()) {
-                        clientCircles[ip] = sf::CircleShape(20.0f);
+                        clientCircles[ip] = sf::CircleShape(10.0f);
                         clientCircles[ip].setFillColor(sf::Color::Blue);
                         clientCircles[ip].setOutlineColor(sf::Color(0, 0, 100));
                         clientCircles[ip].setOutlineThickness(2.0f);
@@ -1774,8 +1786,8 @@ int main() {
                     
                     // Scale position for rendering
                     clientCircles[ip].setPosition(
-                        renderClientPos.x * scaleX - 20.0f,
-                        renderClientPos.y * scaleY - 20.0f
+                        renderClientPos.x * scaleX - 10.0f,
+                        renderClientPos.y * scaleY - 10.0f
                     );
                 }
             }
@@ -1786,35 +1798,6 @@ int main() {
             
             // Draw server player as green circle (radius 30px) - always visible
             window.draw(serverCircle);
-            
-            // Draw health bar above server player (green rectangle, 100 HP max)
-            const float healthBarWidth = 60.0f; // Maximum width
-            const float healthBarHeight = 8.0f;
-            const float healthBarOffsetY = 45.0f; // Distance above player
-            
-            // Calculate current health bar width based on health percentage
-            float healthPercentage = serverHealth / 100.0f;
-            float currentHealthBarWidth = healthBarWidth * healthPercentage;
-            
-            // Health bar background (dark red)
-            sf::RectangleShape healthBarBg(sf::Vector2f(healthBarWidth, healthBarHeight));
-            healthBarBg.setFillColor(sf::Color(100, 0, 0));
-            healthBarBg.setPosition(
-                renderPos.x * scaleX - healthBarWidth / 2.0f,
-                renderPos.y * scaleY - healthBarOffsetY
-            );
-            window.draw(healthBarBg);
-            
-            // Health bar foreground (green)
-            if (currentHealthBarWidth > 0.0f) {
-                sf::RectangleShape healthBar(sf::Vector2f(currentHealthBarWidth, healthBarHeight));
-                healthBar.setFillColor(sf::Color::Green);
-                healthBar.setPosition(
-                    renderPos.x * scaleX - healthBarWidth / 2.0f,
-                    renderPos.y * scaleY - healthBarOffsetY
-                );
-                window.draw(healthBar);
-            }
             
             // Apply fog overlay with circular cutout around server player
             sf::Vector2f playerScreenPos(renderPos.x * scaleX, renderPos.y * scaleY);
@@ -1828,6 +1811,15 @@ int main() {
             scoreText.setFillColor(sf::Color::White);
             scoreText.setPosition(20.0f, 20.0f);
             window.draw(scoreText);
+            
+            // Draw health next to score
+            sf::Text healthText;
+            healthText.setFont(font);
+            healthText.setString("Health: " + std::to_string(static_cast<int>(serverHealth)) + "/100");
+            healthText.setCharacterSize(28);
+            healthText.setFillColor(sf::Color::Green);
+            healthText.setPosition(20.0f, 60.0f);
+            window.draw(healthText);
             
             // Apply screen darkening effect if server player is dead
             if (!serverIsAlive) {
