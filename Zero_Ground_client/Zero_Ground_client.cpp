@@ -7,6 +7,29 @@
 #include <memory>
 #include <vector>
 #include <cstring>
+#include <queue>
+
+// ========================
+// Constants for the new cell-based map system
+// ========================
+const float MAP_SIZE = 5010.0f;
+const float CELL_SIZE = 30.0f;
+const int GRID_SIZE = 167;  // 5010 / 30 = 167
+const float PLAYER_SIZE = 10.0f;
+const float WALL_WIDTH = 12.0f;
+const float WALL_LENGTH = 30.0f;
+
+// ========================
+// Cell structure for grid-based map
+// ========================
+// Each cell can have walls on its four sides
+// Walls are centered on cell boundaries (WALL_WIDTH/2 on each side)
+struct Cell {
+    bool topWall = false;
+    bool rightWall = false;
+    bool bottomWall = false;
+    bool leftWall = false;
+};
 
 enum class ClientState { ConnectScreen, Connected, WaitingForStart, MainScreen, ErrorScreen, ConnectionLost };
 
@@ -293,8 +316,8 @@ public:
 // ========================
 
 bool validatePosition(const PositionPacket& packet) {
-    bool valid = packet.x >= 0.0f && packet.x <= 500.0f &&
-                 packet.y >= 0.0f && packet.y <= 500.0f;
+    bool valid = packet.x >= 0.0f && packet.x <= MAP_SIZE &&
+                 packet.y >= 0.0f && packet.y <= MAP_SIZE;
     
     if (!valid) {
         std::ostringstream oss;
@@ -388,10 +411,12 @@ sf::Vector2f resolveCollision(sf::Vector2f oldPos, sf::Vector2f newPos, float ra
     return newPos; // No collision
 }
 
-// Clamp position to map boundaries [0, 500]
+// Clamp position to map boundaries [0, MAP_SIZE]
+// NOTE: This function is deprecated - collision system now handles boundary clamping
+// Kept for backward compatibility but not used in new cell-based system
 sf::Vector2f clampToMapBounds(sf::Vector2f pos, float radius) {
-    pos.x = std::max(radius, std::min(500.0f - radius, pos.x));
-    pos.y = std::max(radius, std::min(500.0f - radius, pos.y));
+    pos.x = std::max(radius, std::min(MAP_SIZE - radius, pos.x));
+    pos.y = std::max(radius, std::min(MAP_SIZE - radius, pos.y));
     return pos;
 }
 
@@ -606,10 +631,311 @@ void applyFogOverlay(sf::RenderWindow& window, sf::Vector2f playerScreenPos, flo
     window.draw(fogSprite);
 }
 
+// ========================
+// NEW: Dynamic Camera System
+// ========================
+
+// Update camera to follow the player
+// The camera keeps the player centered on screen while respecting map boundaries
+//
+// CAMERA BEHAVIOR:
+// - Player is always centered on screen (when not near edges)
+// - Camera smoothly follows player movement
+// - Camera stops at map edges to prevent showing out-of-bounds areas
+//
+// BOUNDARY CLAMPING:
+// When the player is near the edge of the map, we need to prevent the camera
+// from showing areas outside the map (which would appear as black space).
+// We do this by clamping the camera center to stay within valid bounds:
+// - Minimum X: halfWidth (so left edge of view doesn't go below 0)
+// - Maximum X: MAP_SIZE - halfWidth (so right edge doesn't exceed MAP_SIZE)
+// - Same logic applies for Y axis
+//
+// This creates a smooth camera that follows the player everywhere except
+// at the map edges, where it stops to prevent showing out-of-bounds areas.
+void updateCamera(sf::RenderWindow& window, sf::Vector2f playerPosition) {
+    // Create a view with the window's dimensions
+    sf::View view;
+    view.setSize(static_cast<float>(window.getSize().x), static_cast<float>(window.getSize().y));
+    
+    // Calculate half dimensions for boundary clamping
+    float halfWidth = window.getSize().x / 2.0f;
+    float halfHeight = window.getSize().y / 2.0f;
+    
+    // Start with player position as center
+    sf::Vector2f center = playerPosition;
+    
+    // Clamp camera center to map boundaries
+    // This prevents the camera from showing areas outside the map
+    center.x = std::max(halfWidth, std::min(center.x, MAP_SIZE - halfWidth));
+    center.y = std::max(halfHeight, std::min(center.y, MAP_SIZE - halfHeight));
+    
+    // Set the clamped center
+    view.setCenter(center);
+    
+    // Apply the view to the window
+    // All subsequent draw calls will use this view's coordinate system
+    window.setView(view);
+}
+
+// ========================
+// NEW: Optimized Visible Wall Rendering with Fog of War
+// ========================
+
+// Render only visible walls around the player with fog of war effect
+// This function implements:
+// 1. Cell-based visibility culling (only render walls within ~10 cells)
+// 2. Caching of visible bounds (recalculate only when player changes cell)
+// 3. Fog of war darkening for walls outside visibility radius
+// 4. Debug output for rendered wall count
+//
+// PERFORMANCE OPTIMIZATION:
+// - Static variables cache the last player cell and visible bounds
+// - Bounds are recalculated only when player moves to a different cell
+// - This reduces computation from every frame to only when needed
+//
+// WALL POSITIONING:
+// - Walls are centered on cell boundaries
+// - topWall: centered on top edge (y - WALL_WIDTH/2)
+// - rightWall: centered on right edge (x + CELL_SIZE - WALL_WIDTH/2)
+// - bottomWall: centered on bottom edge (y + CELL_SIZE - WALL_WIDTH/2)
+// - leftWall: centered on left edge (x - WALL_WIDTH/2)
+//
+// FOG OF WAR:
+// - Walls within VISIBILITY_RADIUS: normal gray (150, 150, 150)
+// - Walls outside VISIBILITY_RADIUS: darkened gray (100, 100, 100)
+void renderVisibleWalls(sf::RenderWindow& window, sf::Vector2f playerPosition, 
+                       const std::vector<std::vector<Cell>>& grid) {
+    // Calculate current player cell
+    int playerCellX = static_cast<int>(playerPosition.x / CELL_SIZE);
+    int playerCellY = static_cast<int>(playerPosition.y / CELL_SIZE);
+    
+    // Cache visible bounds to avoid recalculating every frame
+    // These static variables persist between function calls
+    static int lastPlayerCellX = -1;
+    static int lastPlayerCellY = -1;
+    static int startX, startY, endX, endY;
+    
+    // Recalculate bounds only if player moved to a different cell
+    if (playerCellX != lastPlayerCellX || playerCellY != lastPlayerCellY) {
+        // Calculate visible area: 10 cells in each direction (~300 pixels)
+        startX = std::max(0, playerCellX - 10);
+        startY = std::max(0, playerCellY - 10);
+        endX = std::min(GRID_SIZE - 1, playerCellX + 10);
+        endY = std::min(GRID_SIZE - 1, playerCellY + 10);
+        
+        // Update cached cell position
+        lastPlayerCellX = playerCellX;
+        lastPlayerCellY = playerCellY;
+    }
+    
+    int wallCount = 0;
+    
+    // Iterate through visible cells and render their walls
+    for (int i = startX; i <= endX; i++) {
+        for (int j = startY; j <= endY; j++) {
+            // Calculate cell position in world coordinates
+            float x = i * CELL_SIZE;
+            float y = j * CELL_SIZE;
+            
+            // Calculate cell center for fog of war distance check
+            sf::Vector2f cellCenter(x + CELL_SIZE / 2.0f, y + CELL_SIZE / 2.0f);
+            float distanceToPlayer = getDistance(playerPosition, cellCenter);
+            
+            // Determine wall color based on visibility
+            sf::Color wallColor;
+            if (distanceToPlayer <= VISIBILITY_RADIUS) {
+                wallColor = sf::Color(150, 150, 150); // Normal gray - visible
+            } else {
+                wallColor = sf::Color(100, 100, 100); // Darkened gray - fog of war
+            }
+            
+            // Render topWall (horizontal wall on top edge of cell)
+            // Wall is centered on the boundary: 6px above, 6px below
+            if (grid[i][j].topWall) {
+                sf::RectangleShape wall(sf::Vector2f(WALL_LENGTH, WALL_WIDTH));
+                wall.setPosition(x, y - WALL_WIDTH / 2.0f);
+                wall.setFillColor(wallColor);
+                window.draw(wall);
+                wallCount++;
+            }
+            
+            // Render rightWall (vertical wall on right edge of cell)
+            // Wall is centered on the boundary: 6px left, 6px right
+            if (grid[i][j].rightWall) {
+                sf::RectangleShape wall(sf::Vector2f(WALL_WIDTH, WALL_LENGTH));
+                wall.setPosition(x + CELL_SIZE - WALL_WIDTH / 2.0f, y);
+                wall.setFillColor(wallColor);
+                window.draw(wall);
+                wallCount++;
+            }
+            
+            // Render bottomWall (horizontal wall on bottom edge of cell)
+            // Wall is centered on the boundary: 6px above, 6px below
+            if (grid[i][j].bottomWall) {
+                sf::RectangleShape wall(sf::Vector2f(WALL_LENGTH, WALL_WIDTH));
+                wall.setPosition(x, y + CELL_SIZE - WALL_WIDTH / 2.0f);
+                wall.setFillColor(wallColor);
+                window.draw(wall);
+                wallCount++;
+            }
+            
+            // Render leftWall (vertical wall on left edge of cell)
+            // Wall is centered on the boundary: 6px left, 6px right
+            if (grid[i][j].leftWall) {
+                sf::RectangleShape wall(sf::Vector2f(WALL_WIDTH, WALL_LENGTH));
+                wall.setPosition(x - WALL_WIDTH / 2.0f, y);
+                wall.setFillColor(wallColor);
+                window.draw(wall);
+                wallCount++;
+            }
+        }
+    }
+    
+    // Debug output: log wall count in debug builds only
+    #ifdef _DEBUG
+    std::cout << "Walls rendered: " << wallCount << std::endl;
+    #endif
+}
+
+// ========================
+// NEW: Cell-Based Collision System
+// ========================
+
+// Resolve collision using cell-based grid system
+// This function checks for collisions between the player and walls in nearby cells.
+//
+// ALGORITHM:
+// 1. Create player bounding box at new position
+// 2. Calculate which cell the player is in
+// 3. Check walls in 3×3 grid of cells around player (±1 cell radius)
+// 4. If collision detected, push player back 1 pixel toward old position
+// 5. Clamp position to map boundaries
+//
+// COLLISION DETECTION:
+// - Uses AABB (Axis-Aligned Bounding Box) intersection test
+// - Player is a square: PLAYER_SIZE × PLAYER_SIZE (10×10 pixels)
+// - Walls are rectangles centered on cell boundaries
+// - Checks all 4 possible walls per cell (top, right, bottom, left)
+//
+// COLLISION RESPONSE:
+// - Simple pushback: move 1 pixel in direction opposite to movement
+// - This prevents player from getting stuck in walls
+// - Maintains smooth movement while preventing wall penetration
+//
+// PERFORMANCE:
+// - Only checks 3×3 = 9 cells maximum
+// - Each cell has 0-4 walls to check
+// - Typical case: ~10-15 wall checks (most cells don't have all 4 walls)
+// - Target: < 0.1ms per collision check
+sf::Vector2f resolveCollisionCellBased(sf::Vector2f oldPos, sf::Vector2f newPos, const std::vector<std::vector<Cell>>& grid) {
+    // Step 1: Create bounding box for player at new position
+    // Player is centered at newPos, so we offset by PLAYER_SIZE/2
+    sf::FloatRect playerRect(
+        newPos.x - PLAYER_SIZE / 2.0f,
+        newPos.y - PLAYER_SIZE / 2.0f,
+        PLAYER_SIZE,
+        PLAYER_SIZE
+    );
+    
+    // Step 2: Calculate which cell the player is in
+    int playerCellX = static_cast<int>(newPos.x / CELL_SIZE);
+    int playerCellY = static_cast<int>(newPos.y / CELL_SIZE);
+    
+    // Step 3: Calculate boundaries for checking nearby cells (±1 cell radius)
+    // This creates a 3×3 grid of cells to check
+    int startX = std::max(0, playerCellX - 1);
+    int startY = std::max(0, playerCellY - 1);
+    int endX = std::min(GRID_SIZE - 1, playerCellX + 1);
+    int endY = std::min(GRID_SIZE - 1, playerCellY + 1);
+    
+    // Flag to track if any collision was detected
+    bool collision = false;
+    
+    // Step 4: Iterate through nearby cells and check for wall collisions
+    for (int i = startX; i <= endX; i++) {
+        for (int j = startY; j <= endY; j++) {
+            // Calculate world position of this cell's top-left corner
+            float x = i * CELL_SIZE;
+            float y = j * CELL_SIZE;
+            
+            // Check collision with topWall (horizontal wall on top boundary)
+            // Wall is centered on boundary: position - WALL_WIDTH/2
+            if (grid[i][j].topWall) {
+                sf::FloatRect wallRect(x, y - WALL_WIDTH / 2.0f, WALL_LENGTH, WALL_WIDTH);
+                if (playerRect.intersects(wallRect)) {
+                    collision = true;
+                    break;
+                }
+            }
+            
+            // Check collision with rightWall (vertical wall on right boundary)
+            if (grid[i][j].rightWall) {
+                sf::FloatRect wallRect(x + CELL_SIZE - WALL_WIDTH / 2.0f, y, WALL_WIDTH, WALL_LENGTH);
+                if (playerRect.intersects(wallRect)) {
+                    collision = true;
+                    break;
+                }
+            }
+            
+            // Check collision with bottomWall (horizontal wall on bottom boundary)
+            if (grid[i][j].bottomWall) {
+                sf::FloatRect wallRect(x, y + CELL_SIZE - WALL_WIDTH / 2.0f, WALL_LENGTH, WALL_WIDTH);
+                if (playerRect.intersects(wallRect)) {
+                    collision = true;
+                    break;
+                }
+            }
+            
+            // Check collision with leftWall (vertical wall on left boundary)
+            if (grid[i][j].leftWall) {
+                sf::FloatRect wallRect(x - WALL_WIDTH / 2.0f, y, WALL_WIDTH, WALL_LENGTH);
+                if (playerRect.intersects(wallRect)) {
+                    collision = true;
+                    break;
+                }
+            }
+        }
+        
+        // Break outer loop if collision detected
+        if (collision) break;
+    }
+    
+    // Step 5: Handle collision response
+    if (collision) {
+        // Calculate direction vector from new position back to old position
+        sf::Vector2f direction = oldPos - newPos;
+        
+        // Calculate length of direction vector
+        float length = std::sqrt(direction.x * direction.x + direction.y * direction.y);
+        
+        // Normalize direction vector (make it length 1) and push back 1 pixel
+        if (length > 0.001f) {
+            direction /= length;  // Normalize
+            sf::Vector2f correctedPos = oldPos + direction * 1.0f;
+            
+            // Clamp to map boundaries
+            correctedPos.x = std::max(PLAYER_SIZE / 2.0f, std::min(correctedPos.x, MAP_SIZE - PLAYER_SIZE / 2.0f));
+            correctedPos.y = std::max(PLAYER_SIZE / 2.0f, std::min(correctedPos.y, MAP_SIZE - PLAYER_SIZE / 2.0f));
+            
+            return correctedPos;
+        }
+        
+        // If direction vector is too small (player barely moved), just return old position
+        return oldPos;
+    }
+    
+    // Step 6: No collision detected, clamp new position to map boundaries and return
+    newPos.x = std::max(PLAYER_SIZE / 2.0f, std::min(newPos.x, MAP_SIZE - PLAYER_SIZE / 2.0f));
+    newPos.y = std::max(PLAYER_SIZE / 2.0f, std::min(newPos.y, MAP_SIZE - PLAYER_SIZE / 2.0f));
+    
+    return newPos;
+}
+
 std::mutex mutex;
-Position clientPos = { 475.0f, 25.0f }; // Client spawn position (top-right)
-Position clientPosPrevious = { 475.0f, 25.0f }; // Previous position for interpolation
-Position serverPos = { 25.0f, 475.0f }; // Server spawn position
+Position clientPos = { 4750.0f, 250.0f }; // Client spawn position (top-right corner of 5000×5000 map)
+Position clientPosPrevious = { 4750.0f, 250.0f }; // Previous position for interpolation
+Position serverPos = { 250.0f, 4750.0f }; // Server spawn position (bottom-left corner of 5000×5000 map)
 bool serverConnected = false;
 std::string serverIP = "127.0.0.1";
 GameMap clientGameMap; // Store map data received from server
@@ -620,10 +946,135 @@ bool udpRunning = true; // Flag to control UDP thread
 sf::Clock lastPacketReceived; // Track last received packet for connection loss detection
 uint32_t currentFrameID = 0; // Frame counter for position packets
 
+// Grid for cell-based map system (global for easy access from handshake)
+std::vector<std::vector<Cell>> grid(GRID_SIZE, std::vector<Cell>(GRID_SIZE));
+
 // HUD variables
 float clientHealth = 100.0f; // Client player health (0-100)
 int clientScore = 0; // Client player score
 bool clientIsAlive = true; // Client player alive status
+
+// ========================
+// Map Deserialization Functions
+// ========================
+
+// Deserialize map data from byte buffer into grid
+// Parameters:
+//   buffer - Byte buffer containing serialized grid data
+//   grid - The grid to populate with deserialized data
+//
+// PROTOCOL:
+// The buffer contains GRID_SIZE × GRID_SIZE Cell structures serialized row by row.
+// Each Cell is sizeof(Cell) bytes (4 bytes for 4 booleans).
+// Total size: 167 × 167 × 4 = 111,556 bytes (~109 KB)
+//
+// ALGORITHM:
+// 1. Copy data from buffer into grid row by row
+// 2. Use std::memcpy for efficient memory copy
+// 3. Grid must be pre-allocated to GRID_SIZE × GRID_SIZE
+void deserializeMap(const std::vector<char>& buffer, std::vector<std::vector<Cell>>& grid) {
+    // Calculate expected size
+    size_t expectedSize = GRID_SIZE * GRID_SIZE * sizeof(Cell);
+    
+    if (buffer.size() != expectedSize) {
+        std::cerr << "[ERROR] Buffer size mismatch in deserializeMap: expected " 
+                  << expectedSize << " bytes, got " << buffer.size() << " bytes" << std::endl;
+        return;
+    }
+    
+    // Copy buffer data into grid row by row
+    size_t offset = 0;
+    for (int i = 0; i < GRID_SIZE; i++) {
+        std::memcpy(grid[i].data(), buffer.data() + offset, GRID_SIZE * sizeof(Cell));
+        offset += GRID_SIZE * sizeof(Cell);
+    }
+    
+    std::cout << "[INFO] Map deserialized: " << buffer.size() << " bytes (" 
+              << (buffer.size() / 1024) << " KB)" << std::endl;
+}
+
+// Receive map data from server via TCP
+// Parameters:
+//   serverSocket - TCP socket connected to the server
+//   grid - The grid to populate with received map data
+//
+// Returns: true if successful, false if any error occurred
+//
+// PROTOCOL:
+// 1. Receive data size as uint32_t (4 bytes)
+// 2. Receive serialized map data (variable size, ~109 KB)
+// 3. Deserialize data into grid
+//
+// ERROR HANDLING:
+// - Validates received data size
+// - Logs errors using ErrorHandler
+// - Returns false on any transmission error
+//
+// PERFORMANCE:
+// - TCP ensures reliable delivery
+// - Typical receive time: 10-50ms on LAN, 50-200ms on internet
+// - Blocking operation: will wait until all data is received
+bool receiveMapFromServer(sf::TcpSocket& serverSocket, std::vector<std::vector<Cell>>& grid) {
+    std::cout << "[INFO] Waiting to receive map from server..." << std::endl;
+    
+    // Step 1: Receive the size of the data (4 bytes)
+    uint32_t dataSize = 0;
+    std::size_t received = 0;
+    
+    sf::Socket::Status sizeStatus = serverSocket.receive(&dataSize, sizeof(dataSize), received);
+    if (sizeStatus != sf::Socket::Done) {
+        ErrorHandler::logTCPError("Receive map data size", sizeStatus, 
+                                 serverSocket.getRemoteAddress().toString());
+        return false;
+    }
+    
+    if (received != sizeof(dataSize)) {
+        std::ostringstream oss;
+        oss << "Map data size packet mismatch - expected " << sizeof(dataSize) 
+            << " bytes, got " << received;
+        ErrorHandler::handleInvalidPacket(oss.str(), serverSocket.getRemoteAddress().toString());
+        return false;
+    }
+    
+    std::cout << "[INFO] Map data size received: " << dataSize << " bytes" << std::endl;
+    
+    // Validate data size
+    size_t expectedSize = GRID_SIZE * GRID_SIZE * sizeof(Cell);
+    if (dataSize != expectedSize) {
+        std::ostringstream oss;
+        oss << "Invalid map data size - expected " << expectedSize 
+            << " bytes, got " << dataSize;
+        ErrorHandler::handleInvalidPacket(oss.str(), serverSocket.getRemoteAddress().toString());
+        return false;
+    }
+    
+    // Step 2: Receive the actual map data
+    std::vector<char> mapData(dataSize);
+    std::cout << "[INFO] Receiving map data..." << std::endl;
+    
+    sf::Socket::Status dataStatus = serverSocket.receive(mapData.data(), dataSize, received);
+    if (dataStatus != sf::Socket::Done) {
+        ErrorHandler::logTCPError("Receive map data", dataStatus, 
+                                 serverSocket.getRemoteAddress().toString());
+        return false;
+    }
+    
+    if (received != dataSize) {
+        std::ostringstream oss;
+        oss << "Map data packet mismatch - expected " << dataSize 
+            << " bytes, got " << received;
+        ErrorHandler::handleInvalidPacket(oss.str(), serverSocket.getRemoteAddress().toString());
+        return false;
+    }
+    
+    std::cout << "[INFO] Map data received successfully" << std::endl;
+    
+    // Step 3: Deserialize the map data into grid
+    deserializeMap(mapData, grid);
+    
+    std::cout << "[INFO] Map successfully received and deserialized from server" << std::endl;
+    return true;
+}
 
 // Function to perform TCP connection and handshake
 bool performTCPHandshake(const std::string& ip) {
@@ -672,104 +1123,21 @@ bool performTCPHandshake(const std::string& ip) {
     
     ErrorHandler::logInfo("ConnectPacket sent successfully");
     
-    // Receive MapDataPacket header with timeout
-    ErrorHandler::logInfo("Waiting for MapDataPacket from server...");
+    // Receive grid-based map from server
+    ErrorHandler::logInfo("Waiting to receive grid-based map from server...");
     
-    // Set a timeout for receiving data
-    tcpSocket->setBlocking(false);
-    sf::Clock timeoutClock;
-    const float timeout = 5.0f; // 5 second timeout
-    
-    MapDataPacket mapHeader;
-    std::size_t received = 0;
-    sf::Socket::Status receiveStatus = sf::Socket::NotReady;
-    
-    while (timeoutClock.getElapsedTime().asSeconds() < timeout) {
-        receiveStatus = tcpSocket->receive(&mapHeader, sizeof(MapDataPacket), received);
-        
-        if (receiveStatus == sf::Socket::Done) {
-            break;
-        } else if (receiveStatus == sf::Socket::Disconnected || receiveStatus == sf::Socket::Error) {
-            break;
-        }
-        
-        sf::sleep(sf::milliseconds(10));
-    }
-    
-    tcpSocket->setBlocking(true);
-    
-    ErrorHandler::logInfo("Receive status: " + std::to_string(static_cast<int>(receiveStatus)) + ", received bytes: " + std::to_string(received));
-    
-    if (receiveStatus != sf::Socket::Done) {
-        if (timeoutClock.getElapsedTime().asSeconds() >= timeout) {
-            ErrorHandler::logNetworkError("Receive MapDataPacket", "Timeout after " + std::to_string(timeout) + " seconds");
-        }
-        ErrorHandler::logTCPError("Receive MapDataPacket", receiveStatus, ip);
+    if (!receiveMapFromServer(*tcpSocket, grid)) {
         connectionMessage = "Failed to receive map data";
         connectionMessageColor = sf::Color::Red;
         tcpSocket.reset();
         return false;
     }
     
-    if (received != sizeof(MapDataPacket)) {
-        std::ostringstream oss;
-        oss << "MapDataPacket size mismatch - expected " << sizeof(MapDataPacket) 
-            << " bytes, got " << received;
-        ErrorHandler::handleInvalidPacket(oss.str(), ip);
-        connectionMessage = "Invalid map data received";
-        connectionMessageColor = sf::Color::Red;
-        tcpSocket.reset();
-        return false;
-    }
-    
-    if (!validateMapData(mapHeader)) {
-        connectionMessage = "Invalid map data received";
-        connectionMessageColor = sf::Color::Red;
-        tcpSocket.reset();
-        return false;
-    }
-    
-    ErrorHandler::logInfo("MapDataPacket received with " + std::to_string(mapHeader.wallCount) + " walls");
-    
-    // Receive all wall data
-    clientGameMap.walls.clear();
-    for (uint32_t i = 0; i < mapHeader.wallCount; ++i) {
-        Wall wall;
-        sf::Socket::Status wallStatus = tcpSocket->receive(&wall, sizeof(Wall), received);
-        
-        if (wallStatus != sf::Socket::Done) {
-            ErrorHandler::logTCPError("Receive wall data", wallStatus, ip);
-            connectionMessage = "Failed to receive wall data";
-            connectionMessageColor = sf::Color::Red;
-            tcpSocket.reset();
-            return false;
-        }
-        
-        if (received != sizeof(Wall)) {
-            std::ostringstream oss;
-            oss << "Wall data size mismatch - expected " << sizeof(Wall) 
-                << " bytes, got " << received;
-            ErrorHandler::handleInvalidPacket(oss.str(), ip);
-            connectionMessage = "Failed to receive wall data";
-            connectionMessageColor = sf::Color::Red;
-            tcpSocket.reset();
-            return false;
-        }
-        
-        clientGameMap.walls.push_back(wall);
-    }
-    
-    ErrorHandler::logInfo("Received all " + std::to_string(clientGameMap.walls.size()) + " walls");
-    
-    // Build quadtree for collision detection
-    clientGameMap.spatialIndex = std::make_unique<Quadtree>(sf::FloatRect(0, 0, 500.0f, 500.0f));
-    for (auto& wall : clientGameMap.walls) {
-        clientGameMap.spatialIndex->insert(&wall);
-    }
-    ErrorHandler::logInfo("Quadtree built for collision detection");
+    ErrorHandler::logInfo("Grid-based map received successfully from server");
     
     // Receive initial server position
     PositionPacket serverPosPacket;
+    std::size_t received = 0;
     sf::Socket::Status serverPosStatus = tcpSocket->receive(&serverPosPacket, sizeof(PositionPacket), received);
     
     if (serverPosStatus != sf::Socket::Done) {
@@ -1307,7 +1675,16 @@ int main() {
             
             // Update performance monitoring
             size_t playerCount = serverConnected ? 2 : 1; // Client + server (if connected)
-            size_t wallCount = clientGameMap.walls.size();
+            // Count walls in the grid (approximate - each cell can have 0-4 walls)
+            size_t wallCount = 0;
+            for (int i = 0; i < GRID_SIZE; i++) {
+                for (int j = 0; j < GRID_SIZE; j++) {
+                    if (grid[i][j].topWall) wallCount++;
+                    if (grid[i][j].rightWall) wallCount++;
+                    if (grid[i][j].bottomWall) wallCount++;
+                    if (grid[i][j].leftWall) wallCount++;
+                }
+            }
             perfMonitor.update(deltaTime, playerCount, wallCount);
             
             // Handle client player movement (input isolation - client controls only blue circle)
@@ -1325,12 +1702,9 @@ int main() {
                 if (sf::Keyboard::isKeyPressed(sf::Keyboard::A)) newPos.x -= MOVEMENT_SPEED * deltaTime * 60.0f;
                 if (sf::Keyboard::isKeyPressed(sf::Keyboard::D)) newPos.x += MOVEMENT_SPEED * deltaTime * 60.0f;
                 
-                // Apply collision detection with walls (radius 10px for client - matches visual size)
-                const float playerRadius = 10.0f;
-                newPos = resolveCollision(oldPos, newPos, playerRadius, clientGameMap);
-                
-                // Clamp to map boundaries [0, 500]
-                newPos = clampToMapBounds(newPos, playerRadius);
+                // Apply cell-based collision detection with walls
+                // The new system uses the grid directly instead of the old GameMap
+                newPos = resolveCollisionCellBased(oldPos, newPos, grid);
                 
                 // Update client position
                 {
@@ -1351,12 +1725,18 @@ int main() {
                 interpolationAlpha
             );
             
-            // Scale position for rendering (map is 500x500, window might be different)
-            sf::Vector2u windowSize = window.getSize();
-            float scaleX = windowSize.x / 500.0f;
-            float scaleY = windowSize.y / 500.0f;
+            // Update camera to follow the local player (blue circle)
+            // This must be called before any rendering to ensure the view is set correctly
+            updateCamera(window, renderPos);
             
-            // Get server position for fog of war rendering
+            // Get window size for UI rendering later
+            sf::Vector2u windowSize = window.getSize();
+            
+            // NOTE: Scaling is no longer needed with the new camera system
+            // The camera view handles coordinate transformation automatically
+            // All rendering now uses world coordinates directly (0-5000 range)
+            
+            // Get server position for rendering
             sf::Vector2f currentServerPos;
             bool isServerConnected = false;
             {
@@ -1365,22 +1745,37 @@ int main() {
                 isServerConnected = serverConnected;
             }
             
-            // Render walls with fog of war effects and server player (green circle, 20px) if visible
-            renderFogOfWar(window, sf::Vector2f(clientPos.x, clientPos.y), 
-                          clientGameMap.walls, currentServerPos, 
-                          isServerConnected, scaleX, scaleY);
+            // NEW: Render visible walls using cell-based system with fog of war
+            // This replaces the old fog of war rendering
+            renderVisibleWalls(window, sf::Vector2f(clientPos.x, clientPos.y), grid);
+            
+            // Draw server player (green circle) only if within visibility radius
+            if (isServerConnected && isVisible(sf::Vector2f(clientPos.x, clientPos.y), currentServerPos, VISIBILITY_RADIUS)) {
+                sf::CircleShape serverCircle(10.0f);
+                serverCircle.setFillColor(sf::Color(0, 200, 0, 200));
+                serverCircle.setOutlineColor(sf::Color(0, 100, 0));
+                serverCircle.setOutlineThickness(2.0f);
+                serverCircle.setPosition(
+                    currentServerPos.x - 10.0f,
+                    currentServerPos.y - 10.0f
+                );
+                window.draw(serverCircle);
+            }
             
             // Draw local client player as blue circle (radius 10px) - always visible
             clientCircle.setRadius(10.0f);
             clientCircle.setFillColor(sf::Color::Blue);
             clientCircle.setOutlineColor(sf::Color(0, 0, 100));
             clientCircle.setOutlineThickness(3.0f);
-            clientCircle.setPosition(renderPos.x * scaleX - 10.0f, renderPos.y * scaleY - 10.0f);
+            clientCircle.setPosition(renderPos.x - 10.0f, renderPos.y - 10.0f);
             window.draw(clientCircle);
             
-            // Apply fog overlay with circular cutout around player
-            sf::Vector2f playerScreenPos(renderPos.x * scaleX, renderPos.y * scaleY);
-            applyFogOverlay(window, playerScreenPos, scaleX, scaleY);
+            // NOTE: Fog overlay is now integrated into renderVisibleWalls
+            // The fog of war effect is applied directly to walls based on distance
+            // No need for separate overlay anymore
+            
+            // Reset to default view for UI rendering (HUD should be fixed on screen)
+            window.setView(window.getDefaultView());
             
             // Draw score in top-left corner
             sf::Text scoreText;
