@@ -69,6 +69,28 @@ struct GameMap {
 };
 
 // ========================
+// NEW: Dynamic Map System (5000x5000)
+// ========================
+
+// Constants for the new cell-based map system
+const float MAP_SIZE = 5000.0f;
+const float CELL_SIZE = 30.0f;
+const int GRID_SIZE = 167;  // 5000 / 30 ≈ 167
+const float PLAYER_SIZE = 10.0f;
+const float WALL_WIDTH = 12.0f;
+const float WALL_LENGTH = 30.0f;
+
+// Cell structure for grid-based map
+// Each cell can have walls on its four sides
+// Walls are centered on cell boundaries (WALL_WIDTH/2 on each side)
+struct Cell {
+    bool topWall = false;
+    bool rightWall = false;
+    bool bottomWall = false;
+    bool leftWall = false;
+};
+
+// ========================
 // Quadtree for Spatial Partitioning
 // ========================
 // 
@@ -1460,6 +1482,9 @@ void toggleFullscreen(sf::RenderWindow& window, bool& isFullscreen, const sf::Vi
 }
 
 int main() {
+    // NEW: Grid for cell-based map system
+    std::vector<std::vector<Cell>> grid(GRID_SIZE, std::vector<Cell>(GRID_SIZE));
+    
     // Generate map at startup
     try {
         gameMap = generateMap();
