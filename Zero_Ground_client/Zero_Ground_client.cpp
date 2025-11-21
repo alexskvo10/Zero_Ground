@@ -9,15 +9,24 @@
 #include <cstring>
 #include <queue>
 
+// Global icon image (needs to persist for window lifetime)
+sf::Image g_windowIcon;
+
 // ========================
 // Constants for the new cell-based map system
 // ========================
 const float MAP_SIZE = 5100.0f;
 const float CELL_SIZE = 100.0f;
 const int GRID_SIZE = 51;  // 5100 / 100 = 51
-const float PLAYER_SIZE = 10.0f;
+const float PLAYER_SIZE = 20.0f;  // Diameter (radius = 10px)
 const float WALL_WIDTH = 12.0f;
 const float WALL_LENGTH = 100.0f;
+
+// Fog of War visibility ranges
+const float FOG_RANGE_1 = 210.0f;   // 100% visibility
+const float FOG_RANGE_2 = 510.0f;   // 60% visibility
+const float FOG_RANGE_3 = 930.0f;   // 40% visibility
+const float FOG_RANGE_4 = 1020.0f;  // 20% visibility
 
 // ========================
 // Cell structure for grid-based map
@@ -30,6 +39,26 @@ struct Cell {
     bool bottomWall = false;
     bool leftWall = false;
 };
+
+// ========================
+// Fog of War System
+// ========================
+
+// Calculate alpha (transparency) based on distance from player
+// Returns value from 0 (invisible) to 255 (fully visible)
+sf::Uint8 calculateFogAlpha(float distance) {
+    if (distance <= FOG_RANGE_1) {
+        return 255;  // 100% visibility
+    } else if (distance <= FOG_RANGE_2) {
+        return 153;  // 60% visibility (255 * 0.6)
+    } else if (distance <= FOG_RANGE_3) {
+        return 102;  // 40% visibility (255 * 0.4)
+    } else if (distance <= FOG_RANGE_4) {
+        return 51;   // 20% visibility (255 * 0.2)
+    } else {
+        return 0;    // Invisible beyond FOG_RANGE_4
+    }
+}
 
 enum class ClientState { ConnectScreen, Connected, WaitingForStart, MainScreen, ErrorScreen, ConnectionLost };
 
@@ -524,111 +553,46 @@ private:
 };
 
 // ========================
-// Fog of War System
+// Rounded Rectangle Helper
 // ========================
 
-const float VISIBILITY_RADIUS = 50.0f; // 50 units visibility radius
-
-// Calculate distance between two points
-float getDistance(sf::Vector2f a, sf::Vector2f b) {
-    float dx = a.x - b.x;
-    float dy = a.y - b.y;
-    return std::sqrt(dx * dx + dy * dy);
-}
-
-// Check if a point is within visibility radius
-bool isVisible(sf::Vector2f playerPos, sf::Vector2f targetPos, float radius) {
-    return getDistance(playerPos, targetPos) <= radius;
-}
-
-// Render fog of war effect
-void renderFogOfWar(sf::RenderWindow& window, sf::Vector2f playerPos, 
-                    const std::vector<Wall>& walls, sf::Vector2f serverPos, 
-                    bool serverConnected, float scaleX, float scaleY) {
+// Create a rounded rectangle shape
+// Parameters:
+//   size - Size of the rectangle (width, height)
+//   radius - Radius of the rounded corners
+//   pointCount - Number of points per corner (higher = smoother, default = 8)
+// Returns: ConvexShape representing a rounded rectangle
+sf::ConvexShape createRoundedRectangle(sf::Vector2f size, float radius, unsigned int pointCount = 8) {
+    // Clamp radius to not exceed half of the smaller dimension
+    radius = std::min(radius, std::min(size.x, size.y) / 2.0f);
     
-    // Draw all walls with fog effect
-    for (const auto& wall : walls) {
-        sf::RectangleShape wallShape(sf::Vector2f(wall.width * scaleX, wall.height * scaleY));
-        wallShape.setPosition(wall.x * scaleX, wall.y * scaleY);
-        
-        // Calculate distance from player to wall center
-        sf::Vector2f wallCenter(wall.x + wall.width / 2.0f, wall.y + wall.height / 2.0f);
-        float distance = getDistance(playerPos, wallCenter);
-        
-        // Apply darkening effect if outside visibility radius
-        if (distance > VISIBILITY_RADIUS) {
-            wallShape.setFillColor(sf::Color(100, 100, 100)); // Darkened gray
-        } else {
-            wallShape.setFillColor(sf::Color(150, 150, 150)); // Normal gray
+    // Total points: 4 corners * pointCount points per corner
+    sf::ConvexShape shape;
+    shape.setPointCount(pointCount * 4);
+    
+    // Helper lambda to add corner points
+    auto addCorner = [&](unsigned int startIndex, sf::Vector2f center, float startAngle) {
+        for (unsigned int i = 0; i < pointCount; ++i) {
+            float angle = startAngle + (i * 90.0f / (pointCount - 1)) * 3.14159f / 180.0f;
+            float x = center.x + radius * std::cos(angle);
+            float y = center.y + radius * std::sin(angle);
+            shape.setPoint(startIndex + i, sf::Vector2f(x, y));
         }
-        
-        // Add outline to see exact hitbox
-        wallShape.setOutlineColor(sf::Color(200, 200, 200));
-        wallShape.setOutlineThickness(1.0f);
-        
-        window.draw(wallShape);
-    }
+    };
     
-    // Draw server player only if within visibility radius
-    if (serverConnected && isVisible(playerPos, serverPos, VISIBILITY_RADIUS)) {
-        sf::CircleShape serverCircle(10.0f);
-        serverCircle.setFillColor(sf::Color(0, 200, 0, 200));
-        serverCircle.setOutlineColor(sf::Color(0, 100, 0));
-        serverCircle.setOutlineThickness(2.0f);
-        serverCircle.setPosition(
-            serverPos.x * scaleX - 10.0f,
-            serverPos.y * scaleY - 10.0f
-        );
-        window.draw(serverCircle);
-    }
-}
-
-// Apply fog overlay with circular cutout around player
-void applyFogOverlay(sf::RenderWindow& window, sf::Vector2f playerScreenPos, float scaleX, float scaleY) {
-    sf::Vector2u windowSize = window.getSize();
+    // Top-left corner (180° to 270°)
+    addCorner(0, sf::Vector2f(radius, radius), 180.0f);
     
-    // Create vertex array for fog overlay with circular cutout
-    // We'll use a simple approach: draw multiple rectangles to simulate fog
-    // For a more sophisticated approach, a shader would be ideal
+    // Top-right corner (270° to 360°)
+    addCorner(pointCount, sf::Vector2f(size.x - radius, radius), 270.0f);
     
-    const int segments = 32; // Number of segments for circular approximation
-    const float visibilityRadiusScreen = VISIBILITY_RADIUS * std::min(scaleX, scaleY);
+    // Bottom-right corner (0° to 90°)
+    addCorner(pointCount * 2, sf::Vector2f(size.x - radius, size.y - radius), 0.0f);
     
-    // Create a render texture for the fog mask
-    sf::RenderTexture fogTexture;
-    if (!fogTexture.create(windowSize.x, windowSize.y)) {
-        std::cerr << "[ERROR] Failed to create fog render texture" << std::endl;
-        return;
-    }
+    // Bottom-left corner (90° to 180°)
+    addCorner(pointCount * 3, sf::Vector2f(radius, size.y - radius), 90.0f);
     
-    // Clear with transparent
-    fogTexture.clear(sf::Color::Transparent);
-    
-    // Draw full-screen fog
-    sf::RectangleShape fullFog(sf::Vector2f(windowSize.x, windowSize.y));
-    fullFog.setFillColor(sf::Color(0, 0, 0, 200)); // Black with alpha 200
-    fogTexture.draw(fullFog);
-    
-    // Draw clear circle around player using blend mode
-    sf::CircleShape clearCircle(visibilityRadiusScreen);
-    clearCircle.setOrigin(visibilityRadiusScreen, visibilityRadiusScreen);
-    clearCircle.setPosition(playerScreenPos);
-    clearCircle.setFillColor(sf::Color(0, 0, 0, 0)); // Fully transparent
-    
-    // Use subtract blend mode to create cutout
-    sf::RenderStates states;
-    states.blendMode = sf::BlendMode(
-        sf::BlendMode::Zero,           // Source factor
-        sf::BlendMode::One,            // Destination factor
-        sf::BlendMode::ReverseSubtract // Blend equation
-    );
-    
-    fogTexture.draw(clearCircle, states);
-    fogTexture.display();
-    
-    // Draw the fog texture to the window
-    sf::Sprite fogSprite(fogTexture.getTexture());
-    window.draw(fogSprite);
+    return shape;
 }
 
 // ========================
@@ -679,19 +643,18 @@ void updateCamera(sf::RenderWindow& window, sf::Vector2f playerPosition) {
 }
 
 // ========================
-// NEW: Optimized Visible Wall Rendering with Fog of War
+// NEW: Optimized Visible Wall Rendering
 // ========================
 
-// Render only visible walls around the player with fog of war effect
+// Render only visible walls within the camera view
 // This function implements:
-// 1. Cell-based visibility culling (only render walls within ~10 cells)
-// 2. Caching of visible bounds (recalculate only when player changes cell)
-// 3. Fog of war darkening for walls outside visibility radius
-// 4. Debug output for rendered wall count
+// 1. Camera-based visibility culling (render walls visible in current view)
+// 2. Caching of visible bounds (recalculate only when camera moves significantly)
+// 3. Debug output for rendered wall count
 //
 // PERFORMANCE OPTIMIZATION:
-// - Static variables cache the last player cell and visible bounds
-// - Bounds are recalculated only when player moves to a different cell
+// - Static variables cache the last camera center and visible bounds
+// - Bounds are recalculated only when camera moves significantly
 // - This reduces computation from every frame to only when needed
 //
 // WALL POSITIONING:
@@ -700,36 +663,46 @@ void updateCamera(sf::RenderWindow& window, sf::Vector2f playerPosition) {
 // - rightWall: centered on right edge (x + CELL_SIZE - WALL_WIDTH/2)
 // - bottomWall: centered on bottom edge (y + CELL_SIZE - WALL_WIDTH/2)
 // - leftWall: centered on left edge (x - WALL_WIDTH/2)
-//
-// FOG OF WAR:
-// - Walls within VISIBILITY_RADIUS: normal gray (150, 150, 150)
-// - Walls outside VISIBILITY_RADIUS: darkened gray (100, 100, 100)
 void renderVisibleWalls(sf::RenderWindow& window, sf::Vector2f playerPosition, 
                        const std::vector<std::vector<Cell>>& grid) {
-    // Calculate current player cell
-    int playerCellX = static_cast<int>(playerPosition.x / CELL_SIZE);
-    int playerCellY = static_cast<int>(playerPosition.y / CELL_SIZE);
+    // Get current view to determine visible area
+    sf::View currentView = window.getView();
+    sf::Vector2f viewCenter = currentView.getCenter();
+    sf::Vector2f viewSize = currentView.getSize();
     
-    // Cache visible bounds to avoid recalculating every frame
-    // These static variables persist between function calls
-    static int lastPlayerCellX = -1;
-    static int lastPlayerCellY = -1;
-    static int startX, startY, endX, endY;
+    // Calculate visible world bounds with some padding
+    float padding = CELL_SIZE * 2.0f; // 2 cells padding to avoid pop-in
+    float minX = viewCenter.x - viewSize.x / 2.0f - padding;
+    float maxX = viewCenter.x + viewSize.x / 2.0f + padding;
+    float minY = viewCenter.y - viewSize.y / 2.0f - padding;
+    float maxY = viewCenter.y + viewSize.y / 2.0f + padding;
     
-    // Recalculate bounds only if player moved to a different cell
-    if (playerCellX != lastPlayerCellX || playerCellY != lastPlayerCellY) {
-        // Calculate visible area: 10 cells in each direction (~300 pixels)
-        startX = std::max(0, playerCellX - 10);
-        startY = std::max(0, playerCellY - 10);
-        endX = std::min(GRID_SIZE - 1, playerCellX + 10);
-        endY = std::min(GRID_SIZE - 1, playerCellY + 10);
-        
-        // Update cached cell position
-        lastPlayerCellX = playerCellX;
-        lastPlayerCellY = playerCellY;
-    }
+    // Convert to cell coordinates
+    int startX = std::max(0, static_cast<int>(minX / CELL_SIZE));
+    int startY = std::max(0, static_cast<int>(minY / CELL_SIZE));
+    int endX = std::min(GRID_SIZE - 1, static_cast<int>(maxX / CELL_SIZE));
+    int endY = std::min(GRID_SIZE - 1, static_cast<int>(maxY / CELL_SIZE));
     
     int wallCount = 0;
+    
+    // Wall color - normal gray
+    sf::Color wallColor(150, 150, 150);
+    
+    // Corner radius for rounded walls
+    const float cornerRadius = 3.0f;
+    
+    // PERFORMANCE OPTIMIZATION: Cache wall shapes
+    // Create shapes once and reuse them by only changing position
+    // This avoids expensive shape creation every frame for every wall
+    static sf::ConvexShape horizontalWall = createRoundedRectangle(sf::Vector2f(WALL_LENGTH, WALL_WIDTH), cornerRadius);
+    static sf::ConvexShape verticalWall = createRoundedRectangle(sf::Vector2f(WALL_WIDTH, WALL_LENGTH), cornerRadius);
+    static bool shapesInitialized = false;
+    
+    if (!shapesInitialized) {
+        horizontalWall.setFillColor(wallColor);
+        verticalWall.setFillColor(wallColor);
+        shapesInitialized = true;
+    }
     
     // Iterate through visible cells and render their walls
     for (int i = startX; i <= endX; i++) {
@@ -738,55 +711,57 @@ void renderVisibleWalls(sf::RenderWindow& window, sf::Vector2f playerPosition,
             float x = i * CELL_SIZE;
             float y = j * CELL_SIZE;
             
-            // Calculate cell center for fog of war distance check
-            sf::Vector2f cellCenter(x + CELL_SIZE / 2.0f, y + CELL_SIZE / 2.0f);
-            float distanceToPlayer = getDistance(playerPosition, cellCenter);
+            // Calculate center of cell for distance calculation
+            float cellCenterX = x + CELL_SIZE / 2.0f;
+            float cellCenterY = y + CELL_SIZE / 2.0f;
             
-            // Determine wall color based on visibility
-            sf::Color wallColor;
-            if (distanceToPlayer <= VISIBILITY_RADIUS) {
-                wallColor = sf::Color(150, 150, 150); // Normal gray - visible
-            } else {
-                wallColor = sf::Color(100, 100, 100); // Darkened gray - fog of war
-            }
+            // Calculate distance from player to cell center
+            float dx = cellCenterX - playerPosition.x;
+            float dy = cellCenterY - playerPosition.y;
+            float distance = std::sqrt(dx * dx + dy * dy);
+            
+            // Calculate fog alpha based on distance
+            sf::Uint8 alpha = calculateFogAlpha(distance);
+            
+            // Skip rendering if completely invisible
+            if (alpha == 0) continue;
+            
+            // Apply fog color with calculated alpha
+            sf::Color foggedWallColor(150, 150, 150, alpha);
             
             // Render topWall (horizontal wall on top edge of cell)
             // Wall is centered on the boundary: 6px above, 6px below
             if (grid[i][j].topWall) {
-                sf::RectangleShape wall(sf::Vector2f(WALL_LENGTH, WALL_WIDTH));
-                wall.setPosition(x, y - WALL_WIDTH / 2.0f);
-                wall.setFillColor(wallColor);
-                window.draw(wall);
+                horizontalWall.setFillColor(foggedWallColor);
+                horizontalWall.setPosition(x, y - WALL_WIDTH / 2.0f);
+                window.draw(horizontalWall);
                 wallCount++;
             }
             
             // Render rightWall (vertical wall on right edge of cell)
             // Wall is centered on the boundary: 6px left, 6px right
             if (grid[i][j].rightWall) {
-                sf::RectangleShape wall(sf::Vector2f(WALL_WIDTH, WALL_LENGTH));
-                wall.setPosition(x + CELL_SIZE - WALL_WIDTH / 2.0f, y);
-                wall.setFillColor(wallColor);
-                window.draw(wall);
+                verticalWall.setFillColor(foggedWallColor);
+                verticalWall.setPosition(x + CELL_SIZE - WALL_WIDTH / 2.0f, y);
+                window.draw(verticalWall);
                 wallCount++;
             }
             
             // Render bottomWall (horizontal wall on bottom edge of cell)
             // Wall is centered on the boundary: 6px above, 6px below
             if (grid[i][j].bottomWall) {
-                sf::RectangleShape wall(sf::Vector2f(WALL_LENGTH, WALL_WIDTH));
-                wall.setPosition(x, y + CELL_SIZE - WALL_WIDTH / 2.0f);
-                wall.setFillColor(wallColor);
-                window.draw(wall);
+                horizontalWall.setFillColor(foggedWallColor);
+                horizontalWall.setPosition(x, y + CELL_SIZE - WALL_WIDTH / 2.0f);
+                window.draw(horizontalWall);
                 wallCount++;
             }
             
             // Render leftWall (vertical wall on left edge of cell)
             // Wall is centered on the boundary: 6px left, 6px right
             if (grid[i][j].leftWall) {
-                sf::RectangleShape wall(sf::Vector2f(WALL_WIDTH, WALL_LENGTH));
-                wall.setPosition(x - WALL_WIDTH / 2.0f, y);
-                wall.setFillColor(wallColor);
-                window.draw(wall);
+                verticalWall.setFillColor(foggedWallColor);
+                verticalWall.setPosition(x - WALL_WIDTH / 2.0f, y);
+                window.draw(verticalWall);
                 wallCount++;
             }
         }
@@ -799,131 +774,109 @@ void renderVisibleWalls(sf::RenderWindow& window, sf::Vector2f playerPosition,
 }
 
 // ========================
-// NEW: Cell-Based Collision System
+// NEW: Cell-Based Collision System with Sliding
 // ========================
 
-// Resolve collision using cell-based grid system
-// This function checks for collisions between the player and walls in nearby cells.
-//
-// ALGORITHM:
-// 1. Create player bounding box at new position
-// 2. Calculate which cell the player is in
-// 3. Check walls in 3×3 grid of cells around player (±1 cell radius)
-// 4. If collision detected, push player back 1 pixel toward old position
-// 5. Clamp position to map boundaries
-//
-// COLLISION DETECTION:
-// - Uses AABB (Axis-Aligned Bounding Box) intersection test
-// - Player is a square: PLAYER_SIZE × PLAYER_SIZE (10×10 pixels)
-// - Walls are rectangles centered on cell boundaries
-// - Checks all 4 possible walls per cell (top, right, bottom, left)
-//
-// COLLISION RESPONSE:
-// - Simple pushback: move 1 pixel in direction opposite to movement
-// - This prevents player from getting stuck in walls
-// - Maintains smooth movement while preventing wall penetration
-//
-// PERFORMANCE:
-// - Only checks 3×3 = 9 cells maximum
-// - Each cell has 0-4 walls to check
-// - Typical case: ~10-15 wall checks (most cells don't have all 4 walls)
-// - Target: < 0.1ms per collision check
-sf::Vector2f resolveCollisionCellBased(sf::Vector2f oldPos, sf::Vector2f newPos, const std::vector<std::vector<Cell>>& grid) {
-    // Step 1: Create bounding box for player at new position
-    // Player is centered at newPos, so we offset by PLAYER_SIZE/2
+// Helper function to check if a position collides with walls
+bool checkCollision(sf::Vector2f pos, const std::vector<std::vector<Cell>>& grid) {
     sf::FloatRect playerRect(
-        newPos.x - PLAYER_SIZE / 2.0f,
-        newPos.y - PLAYER_SIZE / 2.0f,
+        pos.x - PLAYER_SIZE / 2.0f,
+        pos.y - PLAYER_SIZE / 2.0f,
         PLAYER_SIZE,
         PLAYER_SIZE
     );
     
-    // Step 2: Calculate which cell the player is in
-    int playerCellX = static_cast<int>(newPos.x / CELL_SIZE);
-    int playerCellY = static_cast<int>(newPos.y / CELL_SIZE);
+    int playerCellX = static_cast<int>(pos.x / CELL_SIZE);
+    int playerCellY = static_cast<int>(pos.y / CELL_SIZE);
     
-    // Step 3: Calculate boundaries for checking nearby cells (±1 cell radius)
-    // This creates a 3×3 grid of cells to check
     int startX = std::max(0, playerCellX - 1);
     int startY = std::max(0, playerCellY - 1);
     int endX = std::min(GRID_SIZE - 1, playerCellX + 1);
     int endY = std::min(GRID_SIZE - 1, playerCellY + 1);
     
-    // Flag to track if any collision was detected
-    bool collision = false;
-    
-    // Step 4: Iterate through nearby cells and check for wall collisions
     for (int i = startX; i <= endX; i++) {
         for (int j = startY; j <= endY; j++) {
-            // Calculate world position of this cell's top-left corner
             float x = i * CELL_SIZE;
             float y = j * CELL_SIZE;
             
-            // Check collision with topWall (horizontal wall on top boundary)
-            // Wall is centered on boundary: position - WALL_WIDTH/2
             if (grid[i][j].topWall) {
                 sf::FloatRect wallRect(x, y - WALL_WIDTH / 2.0f, WALL_LENGTH, WALL_WIDTH);
-                if (playerRect.intersects(wallRect)) {
-                    collision = true;
-                    break;
-                }
+                if (playerRect.intersects(wallRect)) return true;
             }
             
-            // Check collision with rightWall (vertical wall on right boundary)
             if (grid[i][j].rightWall) {
                 sf::FloatRect wallRect(x + CELL_SIZE - WALL_WIDTH / 2.0f, y, WALL_WIDTH, WALL_LENGTH);
-                if (playerRect.intersects(wallRect)) {
-                    collision = true;
-                    break;
-                }
+                if (playerRect.intersects(wallRect)) return true;
             }
             
-            // Check collision with bottomWall (horizontal wall on bottom boundary)
             if (grid[i][j].bottomWall) {
                 sf::FloatRect wallRect(x, y + CELL_SIZE - WALL_WIDTH / 2.0f, WALL_LENGTH, WALL_WIDTH);
-                if (playerRect.intersects(wallRect)) {
-                    collision = true;
-                    break;
-                }
+                if (playerRect.intersects(wallRect)) return true;
             }
             
-            // Check collision with leftWall (vertical wall on left boundary)
             if (grid[i][j].leftWall) {
                 sf::FloatRect wallRect(x - WALL_WIDTH / 2.0f, y, WALL_WIDTH, WALL_LENGTH);
-                if (playerRect.intersects(wallRect)) {
-                    collision = true;
-                    break;
-                }
+                if (playerRect.intersects(wallRect)) return true;
             }
         }
-        
-        // Break outer loop if collision detected
-        if (collision) break;
     }
     
-    // Step 5: Handle collision response
-    if (collision) {
-        // Calculate direction vector from new position back to old position
-        sf::Vector2f direction = oldPos - newPos;
-        
-        // Calculate length of direction vector
-        float length = std::sqrt(direction.x * direction.x + direction.y * direction.y);
-        
-        // Normalize direction vector (make it length 1) and push back 1 pixel
-        if (length > 0.001f) {
-            direction /= length;  // Normalize
-            sf::Vector2f correctedPos = oldPos + direction * 1.0f;
-            
-            // Clamp to map boundaries
-            correctedPos.x = std::max(PLAYER_SIZE / 2.0f, std::min(correctedPos.x, MAP_SIZE - PLAYER_SIZE / 2.0f));
-            correctedPos.y = std::max(PLAYER_SIZE / 2.0f, std::min(correctedPos.y, MAP_SIZE - PLAYER_SIZE / 2.0f));
-            
-            return correctedPos;
-        }
-        
-        // If direction vector is too small (player barely moved), just return old position
-        return oldPos;
+    return false;
+}
+
+// Resolve collision with wall sliding
+// This function implements smooth wall sliding when player moves diagonally into a wall
+//
+// ALGORITHM:
+// 1. Check if new position collides
+// 2. If no collision, return new position
+// 3. If collision, try sliding along X axis (keep Y from newPos, X from oldPos)
+// 4. If X-slide works, return that position
+// 5. If X-slide fails, try sliding along Y axis (keep X from newPos, Y from oldPos)
+// 6. If Y-slide works, return that position
+// 7. If both fail, return old position (stuck against corner)
+//
+// SLIDING BEHAVIOR:
+// - When moving diagonally into a horizontal wall, player slides horizontally
+// - When moving diagonally into a vertical wall, player slides vertically
+// - This creates smooth, intuitive movement along walls
+// - No more getting stuck when pressing two keys at once
+//
+// PERFORMANCE:
+// - Maximum 3 collision checks per frame (newPos, slideX, slideY)
+// - Each check examines ~10-15 walls in nearby cells
+// - Target: < 0.3ms per collision resolution
+sf::Vector2f resolveCollisionCellBased(sf::Vector2f oldPos, sf::Vector2f newPos, const std::vector<std::vector<Cell>>& grid) {
+    // Step 1: Check if new position collides
+    if (!checkCollision(newPos, grid)) {
+        // No collision, clamp to map boundaries and return
+        newPos.x = std::max(PLAYER_SIZE / 2.0f, std::min(newPos.x, MAP_SIZE - PLAYER_SIZE / 2.0f));
+        newPos.y = std::max(PLAYER_SIZE / 2.0f, std::min(newPos.y, MAP_SIZE - PLAYER_SIZE / 2.0f));
+        return newPos;
     }
+    
+    // Step 2: Collision detected, try sliding along X axis
+    // Keep the new X position, but use old Y position
+    sf::Vector2f slideX(newPos.x, oldPos.y);
+    if (!checkCollision(slideX, grid)) {
+        // X-axis slide works! Player slides horizontally along the wall
+        slideX.x = std::max(PLAYER_SIZE / 2.0f, std::min(slideX.x, MAP_SIZE - PLAYER_SIZE / 2.0f));
+        slideX.y = std::max(PLAYER_SIZE / 2.0f, std::min(slideX.y, MAP_SIZE - PLAYER_SIZE / 2.0f));
+        return slideX;
+    }
+    
+    // Step 3: X-axis slide failed, try sliding along Y axis
+    // Keep the new Y position, but use old X position
+    sf::Vector2f slideY(oldPos.x, newPos.y);
+    if (!checkCollision(slideY, grid)) {
+        // Y-axis slide works! Player slides vertically along the wall
+        slideY.x = std::max(PLAYER_SIZE / 2.0f, std::min(slideY.x, MAP_SIZE - PLAYER_SIZE / 2.0f));
+        slideY.y = std::max(PLAYER_SIZE / 2.0f, std::min(slideY.y, MAP_SIZE - PLAYER_SIZE / 2.0f));
+        return slideY;
+    }
+    
+    // Step 4: Both slides failed (stuck in corner), return old position
+    return oldPos;
     
     // Step 6: No collision detected, clamp new position to map boundaries and return
     newPos.x = std::max(PLAYER_SIZE / 2.0f, std::min(newPos.x, MAP_SIZE - PLAYER_SIZE / 2.0f));
@@ -936,13 +889,15 @@ std::mutex mutex;
 Position clientPos = { 4850.0f, 250.0f }; // Client spawn position (top-right corner of 5100×5100 map)
 Position clientPosPrevious = { 4850.0f, 250.0f }; // Previous position for interpolation
 Position serverPos = { 250.0f, 4850.0f }; // Server spawn position (bottom-left corner of 5100×5100 map)
-bool serverConnected = false;
+Position serverPosPrevious = { 250.0f, 4850.0f }; // Previous server position for interpolation
+Position serverPosTarget = { 250.0f, 4850.0f }; // Target server position (latest received)
 std::string serverIP = "127.0.0.1";
 GameMap clientGameMap; // Store map data received from server
 std::unique_ptr<sf::TcpSocket> tcpSocket; // TCP socket for connection
 std::string connectionMessage = "";
 sf::Color connectionMessageColor = sf::Color::White;
 bool udpRunning = true; // Flag to control UDP thread
+bool serverConnected = false; // Track server connection status
 sf::Clock lastPacketReceived; // Track last received packet for connection loss detection
 uint32_t currentFrameID = 0; // Frame counter for position packets
 
@@ -1245,10 +1200,16 @@ void udpThread(std::unique_ptr<sf::UdpSocket> socket, const std::string& ip) {
                     if (validatePosition(inPacket)) {
                         std::lock_guard<std::mutex> lock(mutex);
                         
-                        // Update server position
+                        // Update server position with interpolation support
                         if (inPacket.playerId == 0) { // Server is player 0
-                            serverPos.x = inPacket.x;
-                            serverPos.y = inPacket.y;
+                            // Store previous position for interpolation
+                            serverPosPrevious.x = serverPosTarget.x;
+                            serverPosPrevious.y = serverPosTarget.y;
+                            
+                            // Update target position (latest received)
+                            serverPosTarget.x = inPacket.x;
+                            serverPosTarget.y = inPacket.y;
+                            
                             serverConnected = true;
                             lastPacketReceived.restart(); // Reset timeout timer
                         }
@@ -1301,12 +1262,24 @@ void toggleFullscreen(sf::RenderWindow& window, bool& isFullscreen, const sf::Vi
 
     window.create(mode, isFullscreen ? "Client" : "Client (Windowed)", style);
     window.setFramerateLimit(60);
+    
+    // Restore window icon after recreation
+    if (g_windowIcon.getSize().x > 0) {
+        window.setIcon(g_windowIcon.getSize().x, g_windowIcon.getSize().y, g_windowIcon.getPixelsPtr());
+    }
 }
 
 int main() {
     sf::VideoMode desktopMode = sf::VideoMode::getDesktopMode();
     sf::RenderWindow window(desktopMode, "Client", sf::Style::Fullscreen);
     window.setFramerateLimit(60);
+    
+    // Load and set window icon
+    if (g_windowIcon.loadFromFile("Icon.png")) {
+        window.setIcon(g_windowIcon.getSize().x, g_windowIcon.getSize().y, g_windowIcon.getPixelsPtr());
+    } else {
+        std::cerr << "Warning: Failed to load icon!" << std::endl;
+    }
 
     sf::Font font;
     if (!font.loadFromFile("arial.ttf")) {
@@ -1736,30 +1709,56 @@ int main() {
             // The camera view handles coordinate transformation automatically
             // All rendering now uses world coordinates directly (0-5000 range)
             
-            // Get server position for rendering
+            // Get server position for rendering with interpolation
             sf::Vector2f currentServerPos;
             bool isServerConnected = false;
             {
                 std::lock_guard<std::mutex> lock(mutex);
+                
+                // Interpolate server position for smooth movement
+                // This prevents jerky movement when receiving position updates at 20Hz
+                // We interpolate between the previous and target positions
+                const float serverInterpolationSpeed = 15.0f; // Higher = faster catch-up
+                float serverAlpha = std::min(1.0f, deltaTime * serverInterpolationSpeed);
+                
+                serverPos.x = lerp(serverPos.x, serverPosTarget.x, serverAlpha);
+                serverPos.y = lerp(serverPos.y, serverPosTarget.y, serverAlpha);
+                
                 currentServerPos = sf::Vector2f(serverPos.x, serverPos.y);
                 isServerConnected = serverConnected;
             }
             
-            // NEW: Render visible walls using cell-based system with fog of war
-            // This replaces the old fog of war rendering
+            // Render visible walls using cell-based system
             renderVisibleWalls(window, sf::Vector2f(clientPos.x, clientPos.y), grid);
             
-            // Draw server player (green circle) only if within visibility radius
-            if (isServerConnected && isVisible(sf::Vector2f(clientPos.x, clientPos.y), currentServerPos, VISIBILITY_RADIUS)) {
-                sf::CircleShape serverCircle(PLAYER_SIZE / 2.0f);
-                serverCircle.setFillColor(sf::Color(0, 200, 0, 200));
-                serverCircle.setOutlineColor(sf::Color(0, 100, 0));
-                serverCircle.setOutlineThickness(2.0f);
-                serverCircle.setPosition(
-                    currentServerPos.x - PLAYER_SIZE / 2.0f,
-                    currentServerPos.y - PLAYER_SIZE / 2.0f
-                );
-                window.draw(serverCircle);
+            // Draw server player (green circle) with fog of war
+            if (isServerConnected) {
+                // Calculate distance from client to server player
+                float dx = currentServerPos.x - clientPos.x;
+                float dy = currentServerPos.y - clientPos.y;
+                float distance = std::sqrt(dx * dx + dy * dy);
+                
+                // Calculate fog alpha
+                sf::Uint8 alpha = calculateFogAlpha(distance);
+                
+                // Only draw if visible
+                if (alpha > 0) {
+                    sf::CircleShape serverCircle(PLAYER_SIZE / 2.0f);
+                    
+                    // Apply fog to server player color
+                    sf::Color foggedColor(0, 200, 0, alpha);
+                    serverCircle.setFillColor(foggedColor);
+                    
+                    sf::Color foggedOutline(0, 100, 0, alpha);
+                    serverCircle.setOutlineColor(foggedOutline);
+                    serverCircle.setOutlineThickness(2.0f);
+                    
+                    serverCircle.setPosition(
+                        currentServerPos.x - PLAYER_SIZE / 2.0f,
+                        currentServerPos.y - PLAYER_SIZE / 2.0f
+                    );
+                    window.draw(serverCircle);
+                }
             }
             
             // Draw local client player as blue circle - always visible
@@ -1770,10 +1769,7 @@ int main() {
             clientCircle.setPosition(renderPos.x - PLAYER_SIZE / 2.0f, renderPos.y - PLAYER_SIZE / 2.0f);
             window.draw(clientCircle);
             
-            // NOTE: Fog overlay is now integrated into renderVisibleWalls
-            // The fog of war effect is applied directly to walls based on distance
-            // No need for separate overlay anymore
-            
+
             // Reset to default view for UI rendering (HUD should be fixed on screen)
             sf::View uiView;
             uiView.setSize(static_cast<float>(window.getSize().x), static_cast<float>(window.getSize().y));
