@@ -73,12 +73,12 @@ struct GameMap {
 // ========================
 
 // Constants for the new cell-based map system
-const float MAP_SIZE = 5010.0f;
-const float CELL_SIZE = 30.0f;
-const int GRID_SIZE = 167;  // 5010 / 30 = 167
+const float MAP_SIZE = 5100.0f;
+const float CELL_SIZE = 100.0f;
+const int GRID_SIZE = 51;  // 5100 / 100 = 51
 const float PLAYER_SIZE = 10.0f;
 const float WALL_WIDTH = 12.0f;
-const float WALL_LENGTH = 30.0f;
+const float WALL_LENGTH = 100.0f;
 
 // Cell structure for grid-based map
 // Each cell can have walls on its four sides
@@ -420,8 +420,8 @@ bool generateValidMap(std::vector<std::vector<Cell>>& grid) {
         
         // Step 3: Check if path exists between spawn points
         std::cout << "Validating connectivity..." << std::endl;
-        sf::Vector2i serverSpawn(250, 4750);  // Bottom-left area
-        sf::Vector2i clientSpawn(4750, 250);  // Top-right area
+        sf::Vector2i serverSpawn(250, 4850);  // Bottom-left area
+        sf::Vector2i clientSpawn(4850, 250);  // Top-right area
         
         std::cout << "Server spawn: (" << serverSpawn.x << ", " << serverSpawn.y << ")" << std::endl;
         std::cout << "Client spawn: (" << clientSpawn.x << ", " << clientSpawn.y << ")" << std::endl;
@@ -1758,8 +1758,8 @@ void applyFogOverlay(sf::RenderWindow& window, sf::Vector2f playerScreenPos, flo
 // ========================
 
 std::mutex mutex;
-Position serverPos = { 250.0f, 4750.0f }; // Server spawn position (bottom-left area of 5000x5000 map)
-Position serverPosPrevious = { 250.0f, 4750.0f }; // Previous position for interpolation
+Position serverPos = { 250.0f, 4850.0f }; // Server spawn position (bottom-left area of 5100x5100 map)
+Position serverPosPrevious = { 250.0f, 4850.0f }; // Previous position for interpolation
 float serverHealth = 100.0f; // Server player health (0-100)
 int serverScore = 0; // Server player score
 bool serverIsAlive = true; // Server player alive status
@@ -2144,6 +2144,10 @@ void toggleFullscreen(sf::RenderWindow& window, bool& isFullscreen, const sf::Vi
 
     window.create(mode, isFullscreen ? "Server" : "Server (Windowed)", style);
     window.setFramerateLimit(60);
+    
+    // Reset view to default after window recreation
+    // This ensures proper scaling when switching between fullscreen and windowed mode
+    window.setView(window.getDefaultView());
 }
 
 int main() {
@@ -2254,11 +2258,11 @@ int main() {
     playButtonText.setFillColor(sf::Color::White);
 
     // �������� ��������� ������
-    sf::CircleShape serverCircle(10.0f);
+    sf::CircleShape serverCircle(PLAYER_SIZE / 2.0f);
     serverCircle.setFillColor(sf::Color::Green);
     serverCircle.setOutlineColor(sf::Color(0, 100, 0));
     serverCircle.setOutlineThickness(3.0f);
-    serverCircle.setPosition(serverPos.x - 10.0f, serverPos.y - 10.0f);
+    serverCircle.setPosition(serverPos.x - PLAYER_SIZE / 2.0f, serverPos.y - PLAYER_SIZE / 2.0f);
 
     std::map<sf::IpAddress, sf::CircleShape> clientCircles;
     
@@ -2499,6 +2503,13 @@ int main() {
             serverCircle.setRadius(PLAYER_SIZE / 2.0f);
             serverCircle.setPosition(renderPos.x - PLAYER_SIZE / 2.0f, renderPos.y - PLAYER_SIZE / 2.0f);
             window.draw(serverCircle);
+            
+            // Reset view to default for UI rendering
+            // UI elements (score, health) need to be drawn in screen coordinates, not world coordinates
+            sf::View uiView;
+            uiView.setSize(static_cast<float>(window.getSize().x), static_cast<float>(window.getSize().y));
+            uiView.setCenter(static_cast<float>(window.getSize().x) / 2.0f, static_cast<float>(window.getSize().y) / 2.0f);
+            window.setView(uiView);
             
             // Draw score in top-left corner
             sf::Text scoreText;

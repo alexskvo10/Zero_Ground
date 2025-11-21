@@ -12,12 +12,12 @@
 // ========================
 // Constants for the new cell-based map system
 // ========================
-const float MAP_SIZE = 5010.0f;
-const float CELL_SIZE = 30.0f;
-const int GRID_SIZE = 167;  // 5010 / 30 = 167
+const float MAP_SIZE = 5100.0f;
+const float CELL_SIZE = 100.0f;
+const int GRID_SIZE = 51;  // 5100 / 100 = 51
 const float PLAYER_SIZE = 10.0f;
 const float WALL_WIDTH = 12.0f;
-const float WALL_LENGTH = 30.0f;
+const float WALL_LENGTH = 100.0f;
 
 // ========================
 // Cell structure for grid-based map
@@ -933,9 +933,9 @@ sf::Vector2f resolveCollisionCellBased(sf::Vector2f oldPos, sf::Vector2f newPos,
 }
 
 std::mutex mutex;
-Position clientPos = { 4750.0f, 250.0f }; // Client spawn position (top-right corner of 5000×5000 map)
-Position clientPosPrevious = { 4750.0f, 250.0f }; // Previous position for interpolation
-Position serverPos = { 250.0f, 4750.0f }; // Server spawn position (bottom-left corner of 5000×5000 map)
+Position clientPos = { 4850.0f, 250.0f }; // Client spawn position (top-right corner of 5100×5100 map)
+Position clientPosPrevious = { 4850.0f, 250.0f }; // Previous position for interpolation
+Position serverPos = { 250.0f, 4850.0f }; // Server spawn position (bottom-left corner of 5100×5100 map)
 bool serverConnected = false;
 std::string serverIP = "127.0.0.1";
 GameMap clientGameMap; // Store map data received from server
@@ -1382,13 +1382,13 @@ int main() {
     waitingStartText.setFillColor(sf::Color::Yellow);
 
     // �������� ��������� ������
-    sf::CircleShape clientCircle(30.0f);
+    sf::CircleShape clientCircle(PLAYER_SIZE / 2.0f);
     clientCircle.setFillColor(sf::Color::Blue);
     clientCircle.setOutlineColor(sf::Color(0, 0, 100));
     clientCircle.setOutlineThickness(3.0f);
-    clientCircle.setPosition(clientPos.x - 30.0f, clientPos.y - 30.0f);
+    clientCircle.setPosition(clientPos.x - PLAYER_SIZE / 2.0f, clientPos.y - PLAYER_SIZE / 2.0f);
 
-    sf::CircleShape serverCircle(10.0f);
+    sf::CircleShape serverCircle(PLAYER_SIZE / 2.0f);
     serverCircle.setFillColor(sf::Color(0, 200, 0, 200));
     serverCircle.setOutlineColor(sf::Color(0, 100, 0));
     serverCircle.setOutlineThickness(2.0f);
@@ -1751,23 +1751,23 @@ int main() {
             
             // Draw server player (green circle) only if within visibility radius
             if (isServerConnected && isVisible(sf::Vector2f(clientPos.x, clientPos.y), currentServerPos, VISIBILITY_RADIUS)) {
-                sf::CircleShape serverCircle(10.0f);
+                sf::CircleShape serverCircle(PLAYER_SIZE / 2.0f);
                 serverCircle.setFillColor(sf::Color(0, 200, 0, 200));
                 serverCircle.setOutlineColor(sf::Color(0, 100, 0));
                 serverCircle.setOutlineThickness(2.0f);
                 serverCircle.setPosition(
-                    currentServerPos.x - 10.0f,
-                    currentServerPos.y - 10.0f
+                    currentServerPos.x - PLAYER_SIZE / 2.0f,
+                    currentServerPos.y - PLAYER_SIZE / 2.0f
                 );
                 window.draw(serverCircle);
             }
             
-            // Draw local client player as blue circle (radius 10px) - always visible
-            clientCircle.setRadius(10.0f);
+            // Draw local client player as blue circle - always visible
+            clientCircle.setRadius(PLAYER_SIZE / 2.0f);
             clientCircle.setFillColor(sf::Color::Blue);
             clientCircle.setOutlineColor(sf::Color(0, 0, 100));
             clientCircle.setOutlineThickness(3.0f);
-            clientCircle.setPosition(renderPos.x - 10.0f, renderPos.y - 10.0f);
+            clientCircle.setPosition(renderPos.x - PLAYER_SIZE / 2.0f, renderPos.y - PLAYER_SIZE / 2.0f);
             window.draw(clientCircle);
             
             // NOTE: Fog overlay is now integrated into renderVisibleWalls
@@ -1775,7 +1775,10 @@ int main() {
             // No need for separate overlay anymore
             
             // Reset to default view for UI rendering (HUD should be fixed on screen)
-            window.setView(window.getDefaultView());
+            sf::View uiView;
+            uiView.setSize(static_cast<float>(window.getSize().x), static_cast<float>(window.getSize().y));
+            uiView.setCenter(static_cast<float>(window.getSize().x) / 2.0f, static_cast<float>(window.getSize().y) / 2.0f);
+            window.setView(uiView);
             
             // Draw score in top-left corner
             sf::Text scoreText;
