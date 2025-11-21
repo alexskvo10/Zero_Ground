@@ -596,6 +596,105 @@ sf::ConvexShape createRoundedRectangle(sf::Vector2f size, float radius, unsigned
 }
 
 // ========================
+// NEW: Optimized Fog of War Background Rendering
+// ========================
+
+// Render background with smooth fog of war gradient effect (optimized)
+// The background gets darker the further it is from the player
+void renderFoggedBackground(sf::RenderWindow& window, sf::Vector2f playerPosition) {
+    // Get current view to determine visible area
+    sf::View currentView = window.getView();
+    sf::Vector2f viewCenter = currentView.getCenter();
+    sf::Vector2f viewSize = currentView.getSize();
+    
+    // Calculate visible world bounds with padding
+    float padding = 200.0f;
+    float minX = std::max(0.0f, viewCenter.x - viewSize.x / 2.0f - padding);
+    float maxX = std::min(MAP_SIZE, viewCenter.x + viewSize.x / 2.0f + padding);
+    float minY = std::max(0.0f, viewCenter.y - viewSize.y / 2.0f - padding);
+    float maxY = std::min(MAP_SIZE, viewCenter.y + viewSize.y / 2.0f + padding);
+    
+    // Base background color (136, 101, 56)
+    const sf::Color baseColor(136, 101, 56);
+    
+    // OPTIMIZED: Use larger chunks (50x50) for better performance
+    // This reduces draw calls from ~10000 to ~400 per frame
+    const float chunkSize = 50.0f;
+    
+    for (float x = minX; x < maxX; x += chunkSize) {
+        for (float y = minY; y < maxY; y += chunkSize) {
+            // Calculate center of chunk
+            float chunkCenterX = x + chunkSize / 2.0f;
+            float chunkCenterY = y + chunkSize / 2.0f;
+            
+            // Calculate distance from player to chunk center
+            float dx = chunkCenterX - playerPosition.x;
+            float dy = chunkCenterY - playerPosition.y;
+            float distance = std::sqrt(dx * dx + dy * dy);
+            
+            // Calculate fog alpha (smooth gradient)
+            sf::Uint8 alpha = calculateFogAlpha(distance);
+            
+            // Apply fog to background color
+            sf::Color foggedColor(baseColor.r, baseColor.g, baseColor.b, alpha);
+            
+            // Create and draw background rectangle
+            sf::RectangleShape bgRect(sf::Vector2f(chunkSize, chunkSize));
+            bgRect.setPosition(x, y);
+            bgRect.setFillColor(foggedColor);
+            window.draw(bgRect);
+        }
+    }
+}
+
+// ========================
+// NEW: Fog Overlay Effect
+// ========================
+
+// Render fog overlay that darkens everything far from player
+// This creates a smooth vignette effect
+void renderFogOverlay(sf::RenderWindow& window, sf::Vector2f playerPosition) {
+    // Get current view
+    sf::View currentView = window.getView();
+    sf::Vector2f viewCenter = currentView.getCenter();
+    sf::Vector2f viewSize = currentView.getSize();
+    
+    // Calculate visible world bounds
+    float minX = viewCenter.x - viewSize.x / 2.0f;
+    float maxX = viewCenter.x + viewSize.x / 2.0f;
+    float minY = viewCenter.y - viewSize.y / 2.0f;
+    float maxY = viewCenter.y + viewSize.y / 2.0f;
+    
+    // Render fog overlay in larger chunks for smooth gradient
+    const float chunkSize = 100.0f;
+    
+    for (float x = minX; x < maxX; x += chunkSize) {
+        for (float y = minY; y < maxY; y += chunkSize) {
+            // Calculate center of chunk
+            float chunkCenterX = x + chunkSize / 2.0f;
+            float chunkCenterY = y + chunkSize / 2.0f;
+            
+            // Calculate distance from player
+            float dx = chunkCenterX - playerPosition.x;
+            float dy = chunkCenterY - playerPosition.y;
+            float distance = std::sqrt(dx * dx + dy * dy);
+            
+            // Calculate fog darkness (inverse of visibility)
+            // Close = transparent, far = dark
+            sf::Uint8 darkness = 255 - calculateFogAlpha(distance);
+            
+            // Apply black fog overlay
+            sf::Color fogColor(0, 0, 0, darkness);
+            
+            sf::RectangleShape fogRect(sf::Vector2f(chunkSize, chunkSize));
+            fogRect.setPosition(x, y);
+            fogRect.setFillColor(fogColor);
+            window.draw(fogRect);
+        }
+    }
+}
+
+// ========================
 // NEW: Dynamic Camera System
 // ========================
 
@@ -704,65 +803,83 @@ void renderVisibleWalls(sf::RenderWindow& window, sf::Vector2f playerPosition,
         shapesInitialized = true;
     }
     
-    // Iterate through visible cells and render their walls
+    // Iterate through visible cells and render their walls with smooth gradient
     for (int i = startX; i <= endX; i++) {
         for (int j = startY; j <= endY; j++) {
             // Calculate cell position in world coordinates
             float x = i * CELL_SIZE;
             float y = j * CELL_SIZE;
             
-            // Calculate center of cell for distance calculation
-            float cellCenterX = x + CELL_SIZE / 2.0f;
-            float cellCenterY = y + CELL_SIZE / 2.0f;
-            
-            // Calculate distance from player to cell center
-            float dx = cellCenterX - playerPosition.x;
-            float dy = cellCenterY - playerPosition.y;
-            float distance = std::sqrt(dx * dx + dy * dy);
-            
-            // Calculate fog alpha based on distance
-            sf::Uint8 alpha = calculateFogAlpha(distance);
-            
-            // Skip rendering if completely invisible
-            if (alpha == 0) continue;
-            
-            // Apply fog color with calculated alpha
-            sf::Color foggedWallColor(150, 150, 150, alpha);
-            
             // Render topWall (horizontal wall on top edge of cell)
-            // Wall is centered on the boundary: 6px above, 6px below
             if (grid[i][j].topWall) {
-                horizontalWall.setFillColor(foggedWallColor);
-                horizontalWall.setPosition(x, y - WALL_WIDTH / 2.0f);
-                window.draw(horizontalWall);
-                wallCount++;
+                // Calculate center of this specific wall for smooth gradient
+                float wallCenterX = x + WALL_LENGTH / 2.0f;
+                float wallCenterY = y;
+                float dx = wallCenterX - playerPosition.x;
+                float dy = wallCenterY - playerPosition.y;
+                float distance = std::sqrt(dx * dx + dy * dy);
+                sf::Uint8 alpha = calculateFogAlpha(distance);
+                
+                if (alpha > 0) {
+                    horizontalWall.setFillColor(sf::Color(150, 150, 150, alpha));
+                    horizontalWall.setPosition(x, y - WALL_WIDTH / 2.0f);
+                    window.draw(horizontalWall);
+                    wallCount++;
+                }
             }
             
             // Render rightWall (vertical wall on right edge of cell)
-            // Wall is centered on the boundary: 6px left, 6px right
             if (grid[i][j].rightWall) {
-                verticalWall.setFillColor(foggedWallColor);
-                verticalWall.setPosition(x + CELL_SIZE - WALL_WIDTH / 2.0f, y);
-                window.draw(verticalWall);
-                wallCount++;
+                // Calculate center of this specific wall for smooth gradient
+                float wallCenterX = x + CELL_SIZE;
+                float wallCenterY = y + WALL_LENGTH / 2.0f;
+                float dx = wallCenterX - playerPosition.x;
+                float dy = wallCenterY - playerPosition.y;
+                float distance = std::sqrt(dx * dx + dy * dy);
+                sf::Uint8 alpha = calculateFogAlpha(distance);
+                
+                if (alpha > 0) {
+                    verticalWall.setFillColor(sf::Color(150, 150, 150, alpha));
+                    verticalWall.setPosition(x + CELL_SIZE - WALL_WIDTH / 2.0f, y);
+                    window.draw(verticalWall);
+                    wallCount++;
+                }
             }
             
             // Render bottomWall (horizontal wall on bottom edge of cell)
-            // Wall is centered on the boundary: 6px above, 6px below
             if (grid[i][j].bottomWall) {
-                horizontalWall.setFillColor(foggedWallColor);
-                horizontalWall.setPosition(x, y + CELL_SIZE - WALL_WIDTH / 2.0f);
-                window.draw(horizontalWall);
-                wallCount++;
+                // Calculate center of this specific wall for smooth gradient
+                float wallCenterX = x + WALL_LENGTH / 2.0f;
+                float wallCenterY = y + CELL_SIZE;
+                float dx = wallCenterX - playerPosition.x;
+                float dy = wallCenterY - playerPosition.y;
+                float distance = std::sqrt(dx * dx + dy * dy);
+                sf::Uint8 alpha = calculateFogAlpha(distance);
+                
+                if (alpha > 0) {
+                    horizontalWall.setFillColor(sf::Color(150, 150, 150, alpha));
+                    horizontalWall.setPosition(x, y + CELL_SIZE - WALL_WIDTH / 2.0f);
+                    window.draw(horizontalWall);
+                    wallCount++;
+                }
             }
             
             // Render leftWall (vertical wall on left edge of cell)
-            // Wall is centered on the boundary: 6px left, 6px right
             if (grid[i][j].leftWall) {
-                verticalWall.setFillColor(foggedWallColor);
-                verticalWall.setPosition(x - WALL_WIDTH / 2.0f, y);
-                window.draw(verticalWall);
-                wallCount++;
+                // Calculate center of this specific wall for smooth gradient
+                float wallCenterX = x;
+                float wallCenterY = y + WALL_LENGTH / 2.0f;
+                float dx = wallCenterX - playerPosition.x;
+                float dy = wallCenterY - playerPosition.y;
+                float distance = std::sqrt(dx * dx + dy * dy);
+                sf::Uint8 alpha = calculateFogAlpha(distance);
+                
+                if (alpha > 0) {
+                    verticalWall.setFillColor(sf::Color(150, 150, 150, alpha));
+                    verticalWall.setPosition(x - WALL_WIDTH / 2.0f, y);
+                    window.draw(verticalWall);
+                    wallCount++;
+                }
             }
         }
     }
@@ -1507,6 +1624,7 @@ int main() {
             }
         }
 
+        // Clear window with black for menu screens, fogged background will be drawn in MainScreen
         window.clear(sf::Color::Black);
 
         if (state == ClientState::ConnectScreen) {
@@ -1702,6 +1820,9 @@ int main() {
             // This must be called before any rendering to ensure the view is set correctly
             updateCamera(window, renderPos);
             
+            // Render fogged background (must be after camera update)
+            renderFoggedBackground(window, renderPos);
+            
             // Get window size for UI rendering later
             sf::Vector2u windowSize = window.getSize();
             
@@ -1769,6 +1890,8 @@ int main() {
             clientCircle.setPosition(renderPos.x - PLAYER_SIZE / 2.0f, renderPos.y - PLAYER_SIZE / 2.0f);
             window.draw(clientCircle);
             
+            // Render fog overlay on top of everything (creates vignette effect)
+            renderFogOverlay(window, renderPos);
 
             // Reset to default view for UI rendering (HUD should be fixed on screen)
             sf::View uiView;
