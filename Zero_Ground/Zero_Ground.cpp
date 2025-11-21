@@ -89,14 +89,21 @@ const float FOG_RANGE_2 = 510.0f;   // 60% visibility
 const float FOG_RANGE_3 = 930.0f;   // 40% visibility
 const float FOG_RANGE_4 = 1020.0f;  // 20% visibility
 
+// Wall types
+enum class WallType : uint8_t {
+    None = 0,      // No wall
+    Concrete = 1,  // Concrete wall (gray)
+    Wood = 2       // Wooden wall (brown)
+};
+
 // Cell structure for grid-based map
 // Each cell can have walls on its four sides
 // Walls are centered on cell boundaries (WALL_WIDTH/2 on each side)
 struct Cell {
-    bool topWall = false;
-    bool rightWall = false;
-    bool bottomWall = false;
-    bool leftWall = false;
+    WallType topWall = WallType::None;
+    WallType rightWall = WallType::None;
+    WallType bottomWall = WallType::None;
+    WallType leftWall = WallType::None;
 };
 
 // ========================
@@ -227,23 +234,26 @@ public:
 
 // Set a wall on a specific side of a cell
 // side: 0=top, 1=right, 2=bottom, 3=left
-void setWall(Cell& cell, int side) {
+// type: WallType to set (Concrete or Wood)
+void setWall(Cell& cell, int side, WallType type) {
     switch (side) {
-        case 0: cell.topWall = true; break;
-        case 1: cell.rightWall = true; break;
-        case 2: cell.bottomWall = true; break;
-        case 3: cell.leftWall = true; break;
+        case 0: cell.topWall = type; break;
+        case 1: cell.rightWall = type; break;
+        case 2: cell.bottomWall = type; break;
+        case 3: cell.leftWall = type; break;
     }
 }
 
 // Generate map using probabilistic algorithm
 // Only cells where (i+j)%2==1 can have walls
 // Probabilities: 60% - 1 wall, 25% - 2 walls, 15% - 0 walls
+// Wall types: 70% concrete, 30% wood
 void generateMap(std::vector<std::vector<Cell>>& grid) {
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<int> probDist(0, 99);  // 0-99 for percentages
     std::uniform_int_distribution<int> sideDist(0, 3);   // 0-3 for sides
+    std::uniform_int_distribution<int> typeDist(0, 99);  // 0-99 for wall type
     
     for (int i = 0; i < GRID_SIZE; i++) {
         for (int j = 0; j < GRID_SIZE; j++) {
@@ -254,7 +264,9 @@ void generateMap(std::vector<std::vector<Cell>>& grid) {
                 if (probability < 60) {
                     // 60% probability - create one wall on a random side
                     int side = sideDist(gen);
-                    setWall(grid[i][j], side);
+                    // Determine wall type: 70% concrete, 30% wood
+                    WallType type = (typeDist(gen) < 70) ? WallType::Concrete : WallType::Wood;
+                    setWall(grid[i][j], side, type);
                 }
                 else if (probability < 85) {
                     // 25% probability (60-84) - create two walls on different sides
@@ -266,8 +278,11 @@ void generateMap(std::vector<std::vector<Cell>>& grid) {
                         side2 = sideDist(gen);
                     }
                     
-                    setWall(grid[i][j], side1);
-                    setWall(grid[i][j], side2);
+                    // Each wall gets its own type
+                    WallType type1 = (typeDist(gen) < 70) ? WallType::Concrete : WallType::Wood;
+                    WallType type2 = (typeDist(gen) < 70) ? WallType::Concrete : WallType::Wood;
+                    setWall(grid[i][j], side1, type1);
+                    setWall(grid[i][j], side2, type2);
                 }
                 // 15% probability (85-99) - no walls (do nothing)
             }
@@ -293,19 +308,19 @@ bool canMove(sf::Vector2i from, sf::Vector2i to, const std::vector<std::vector<C
     // Check walls based on direction
     if (dx == 1) {
         // Moving right: check if there's a right wall in the 'from' cell
-        return !grid[from.x][from.y].rightWall;
+        return grid[from.x][from.y].rightWall == WallType::None;
     }
     else if (dx == -1) {
         // Moving left: check if there's a left wall in the 'from' cell
-        return !grid[from.x][from.y].leftWall;
+        return grid[from.x][from.y].leftWall == WallType::None;
     }
     else if (dy == 1) {
         // Moving down: check if there's a bottom wall in the 'from' cell
-        return !grid[from.x][from.y].bottomWall;
+        return grid[from.x][from.y].bottomWall == WallType::None;
     }
     else if (dy == -1) {
         // Moving up: check if there's a top wall in the 'from' cell
-        return !grid[from.x][from.y].topWall;
+        return grid[from.x][from.y].topWall == WallType::None;
     }
     
     // No movement or invalid movement
@@ -437,14 +452,34 @@ bool generateValidMap(std::vector<std::vector<Cell>>& grid) {
         
         // Count generated walls for logging
         int wallCount = 0;
+        int concreteCount = 0;
+        int woodCount = 0;
         for (int i = 0; i < GRID_SIZE; i++) {
             for (int j = 0; j < GRID_SIZE; j++) {
-                if (grid[i][j].topWall) wallCount++;
-                if (grid[i][j].rightWall) wallCount++;
-                if (grid[i][j].bottomWall) wallCount++;
-                if (grid[i][j].leftWall) wallCount++;
+                if (grid[i][j].topWall != WallType::None) {
+                    wallCount++;
+                    if (grid[i][j].topWall == WallType::Concrete) concreteCount++;
+                    else woodCount++;
+                }
+                if (grid[i][j].rightWall != WallType::None) {
+                    wallCount++;
+                    if (grid[i][j].rightWall == WallType::Concrete) concreteCount++;
+                    else woodCount++;
+                }
+                if (grid[i][j].bottomWall != WallType::None) {
+                    wallCount++;
+                    if (grid[i][j].bottomWall == WallType::Concrete) concreteCount++;
+                    else woodCount++;
+                }
+                if (grid[i][j].leftWall != WallType::None) {
+                    wallCount++;
+                    if (grid[i][j].leftWall == WallType::Concrete) concreteCount++;
+                    else woodCount++;
+                }
             }
         }
+        std::cout << "Generated " << wallCount << " walls (Concrete: " << concreteCount 
+                  << ", Wood: " << woodCount << ")" << std::endl;
         std::cout << "Generated " << wallCount << " walls" << std::endl;
         
         // Step 3: Check if path exists between spawn points
@@ -1387,22 +1422,21 @@ void renderVisibleWalls(sf::RenderWindow& window, sf::Vector2f playerPosition, c
     // Counter for rendered walls (for performance monitoring)
     int wallCount = 0;
     
-    // Wall color - normal gray
-    sf::Color wallColor(150, 150, 150);
+    // Wall colors
+    sf::Color concreteColor(150, 150, 150);  // Gray for concrete
+    sf::Color woodColor(139, 90, 43);        // Brown for wood
     
     // Corner radius for rounded walls
     const float cornerRadius = 3.0f;
     
     // PERFORMANCE OPTIMIZATION: Cache wall shapes
-    // Create shapes once and reuse them by only changing position
+    // Create shapes once and reuse them by only changing position and color
     // This avoids expensive shape creation every frame for every wall
     static sf::ConvexShape horizontalWall = createRoundedRectangle(sf::Vector2f(WALL_LENGTH, WALL_WIDTH), cornerRadius);
     static sf::ConvexShape verticalWall = createRoundedRectangle(sf::Vector2f(WALL_WIDTH, WALL_LENGTH), cornerRadius);
     static bool shapesInitialized = false;
     
     if (!shapesInitialized) {
-        horizontalWall.setFillColor(wallColor);
-        verticalWall.setFillColor(wallColor);
         shapesInitialized = true;
     }
     
@@ -1414,7 +1448,7 @@ void renderVisibleWalls(sf::RenderWindow& window, sf::Vector2f playerPosition, c
             float y = j * CELL_SIZE;
             
             // Render topWall (horizontal wall on top boundary of cell)
-            if (grid[i][j].topWall) {
+            if (grid[i][j].topWall != WallType::None) {
                 // Calculate center of this specific wall for smooth gradient
                 float wallCenterX = x + WALL_LENGTH / 2.0f;
                 float wallCenterY = y;
@@ -1424,7 +1458,9 @@ void renderVisibleWalls(sf::RenderWindow& window, sf::Vector2f playerPosition, c
                 sf::Uint8 alpha = calculateFogAlpha(distance);
                 
                 if (alpha > 0) {
-                    horizontalWall.setFillColor(sf::Color(150, 150, 150, alpha));
+                    // Choose color based on wall type
+                    sf::Color baseColor = (grid[i][j].topWall == WallType::Concrete) ? concreteColor : woodColor;
+                    horizontalWall.setFillColor(sf::Color(baseColor.r, baseColor.g, baseColor.b, alpha));
                     horizontalWall.setPosition(x, y - WALL_WIDTH / 2.0f);
                     window.draw(horizontalWall);
                     wallCount++;
@@ -1432,7 +1468,7 @@ void renderVisibleWalls(sf::RenderWindow& window, sf::Vector2f playerPosition, c
             }
             
             // Render rightWall (vertical wall on right boundary of cell)
-            if (grid[i][j].rightWall) {
+            if (grid[i][j].rightWall != WallType::None) {
                 // Calculate center of this specific wall for smooth gradient
                 float wallCenterX = x + CELL_SIZE;
                 float wallCenterY = y + WALL_LENGTH / 2.0f;
@@ -1442,7 +1478,9 @@ void renderVisibleWalls(sf::RenderWindow& window, sf::Vector2f playerPosition, c
                 sf::Uint8 alpha = calculateFogAlpha(distance);
                 
                 if (alpha > 0) {
-                    verticalWall.setFillColor(sf::Color(150, 150, 150, alpha));
+                    // Choose color based on wall type
+                    sf::Color baseColor = (grid[i][j].rightWall == WallType::Concrete) ? concreteColor : woodColor;
+                    verticalWall.setFillColor(sf::Color(baseColor.r, baseColor.g, baseColor.b, alpha));
                     verticalWall.setPosition(x + CELL_SIZE - WALL_WIDTH / 2.0f, y);
                     window.draw(verticalWall);
                     wallCount++;
@@ -1450,7 +1488,7 @@ void renderVisibleWalls(sf::RenderWindow& window, sf::Vector2f playerPosition, c
             }
             
             // Render bottomWall (horizontal wall on bottom boundary of cell)
-            if (grid[i][j].bottomWall) {
+            if (grid[i][j].bottomWall != WallType::None) {
                 // Calculate center of this specific wall for smooth gradient
                 float wallCenterX = x + WALL_LENGTH / 2.0f;
                 float wallCenterY = y + CELL_SIZE;
@@ -1460,7 +1498,9 @@ void renderVisibleWalls(sf::RenderWindow& window, sf::Vector2f playerPosition, c
                 sf::Uint8 alpha = calculateFogAlpha(distance);
                 
                 if (alpha > 0) {
-                    horizontalWall.setFillColor(sf::Color(150, 150, 150, alpha));
+                    // Choose color based on wall type
+                    sf::Color baseColor = (grid[i][j].bottomWall == WallType::Concrete) ? concreteColor : woodColor;
+                    horizontalWall.setFillColor(sf::Color(baseColor.r, baseColor.g, baseColor.b, alpha));
                     horizontalWall.setPosition(x, y + CELL_SIZE - WALL_WIDTH / 2.0f);
                     window.draw(horizontalWall);
                     wallCount++;
@@ -1468,7 +1508,7 @@ void renderVisibleWalls(sf::RenderWindow& window, sf::Vector2f playerPosition, c
             }
             
             // Render leftWall (vertical wall on left boundary of cell)
-            if (grid[i][j].leftWall) {
+            if (grid[i][j].leftWall != WallType::None) {
                 // Calculate center of this specific wall for smooth gradient
                 float wallCenterX = x;
                 float wallCenterY = y + WALL_LENGTH / 2.0f;
@@ -1478,7 +1518,9 @@ void renderVisibleWalls(sf::RenderWindow& window, sf::Vector2f playerPosition, c
                 sf::Uint8 alpha = calculateFogAlpha(distance);
                 
                 if (alpha > 0) {
-                    verticalWall.setFillColor(sf::Color(150, 150, 150, alpha));
+                    // Choose color based on wall type
+                    sf::Color baseColor = (grid[i][j].leftWall == WallType::Concrete) ? concreteColor : woodColor;
+                    verticalWall.setFillColor(sf::Color(baseColor.r, baseColor.g, baseColor.b, alpha));
                     verticalWall.setPosition(x - WALL_WIDTH / 2.0f, y);
                     window.draw(verticalWall);
                     wallCount++;
@@ -1519,22 +1561,22 @@ bool checkCollision(sf::Vector2f pos, const std::vector<std::vector<Cell>>& grid
             float x = i * CELL_SIZE;
             float y = j * CELL_SIZE;
             
-            if (grid[i][j].topWall) {
+            if (grid[i][j].topWall != WallType::None) {
                 sf::FloatRect wallRect(x, y - WALL_WIDTH / 2.0f, WALL_LENGTH, WALL_WIDTH);
                 if (playerRect.intersects(wallRect)) return true;
             }
             
-            if (grid[i][j].rightWall) {
+            if (grid[i][j].rightWall != WallType::None) {
                 sf::FloatRect wallRect(x + CELL_SIZE - WALL_WIDTH / 2.0f, y, WALL_WIDTH, WALL_LENGTH);
                 if (playerRect.intersects(wallRect)) return true;
             }
             
-            if (grid[i][j].bottomWall) {
+            if (grid[i][j].bottomWall != WallType::None) {
                 sf::FloatRect wallRect(x, y + CELL_SIZE - WALL_WIDTH / 2.0f, WALL_LENGTH, WALL_WIDTH);
                 if (playerRect.intersects(wallRect)) return true;
             }
             
-            if (grid[i][j].leftWall) {
+            if (grid[i][j].leftWall != WallType::None) {
                 sf::FloatRect wallRect(x - WALL_WIDTH / 2.0f, y, WALL_WIDTH, WALL_LENGTH);
                 if (playerRect.intersects(wallRect)) return true;
             }
@@ -2496,10 +2538,10 @@ int main() {
             size_t wallCount = 0;
             for (int i = 0; i < GRID_SIZE; i++) {
                 for (int j = 0; j < GRID_SIZE; j++) {
-                    if (grid[i][j].topWall) wallCount++;
-                    if (grid[i][j].rightWall) wallCount++;
-                    if (grid[i][j].bottomWall) wallCount++;
-                    if (grid[i][j].leftWall) wallCount++;
+                    if (grid[i][j].topWall != WallType::None) wallCount++;
+                    if (grid[i][j].rightWall != WallType::None) wallCount++;
+                    if (grid[i][j].bottomWall != WallType::None) wallCount++;
+                    if (grid[i][j].leftWall != WallType::None) wallCount++;
                 }
             }
             perfMonitor.update(deltaTime, playerCount, wallCount);
