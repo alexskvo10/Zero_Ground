@@ -2038,6 +2038,21 @@ int main() {
                 }
             }
             
+            // Draw inventory hint at bottom center
+            sf::Text inventoryHint;
+            inventoryHint.setFont(font);
+            inventoryHint.setString("E - inventory");
+            inventoryHint.setCharacterSize(24);
+            inventoryHint.setFillColor(sf::Color(200, 200, 200, 180)); // Light gray, semi-transparent
+            
+            // Center the hint at the bottom of the screen
+            sf::FloatRect hintBounds = inventoryHint.getLocalBounds();
+            inventoryHint.setPosition(
+                windowSize.x / 2.0f - hintBounds.width / 2.0f - hintBounds.left,
+                windowSize.y - 40.0f // 40px from bottom
+            );
+            window.draw(inventoryHint);
+            
             // Apply screen darkening effect if player is dead
             if (!clientIsAlive) {
                 sf::RectangleShape deathOverlay(sf::Vector2f(windowSize.x, windowSize.y));
