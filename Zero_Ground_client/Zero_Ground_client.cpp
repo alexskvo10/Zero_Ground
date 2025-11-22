@@ -1035,6 +1035,14 @@ uint32_t currentFrameID = 0; // Frame counter for position packets
 // Grid for cell-based map system (global for easy access from handshake)
 std::vector<std::vector<Cell>> grid(GRID_SIZE, std::vector<Cell>(GRID_SIZE));
 
+// Inventory system
+const int INVENTORY_SLOTS = 6;
+const float INVENTORY_SLOT_SIZE = 100.0f;
+const float INVENTORY_PADDING = 10.0f;
+bool inventoryOpen = false;
+float inventoryAnimationProgress = 0.0f; // 0.0 = closed, 1.0 = fully open
+sf::Clock inventoryAnimationClock;
+
 // HUD variables
 float clientHealth = 100.0f; // Client player health (0-100)
 int clientScore = 0; // Client player score
@@ -1545,6 +1553,16 @@ int main() {
                 toggleFullscreen(window, isFullscreen, desktopMode);
                 centerElements();
             }
+            
+            // Toggle inventory with E key (works in both English and Russian layouts)
+            if (event.type == sf::Event::KeyPressed && state == ClientState::MainScreen) {
+                // E key on English layout or У key on Russian layout (same physical key)
+                if (event.key.code == sf::Keyboard::E) {
+                    inventoryOpen = !inventoryOpen;
+                    inventoryAnimationClock.restart(); // Start animation
+                    ErrorHandler::logInfo(inventoryOpen ? "Inventory opened" : "Inventory closed");
+                }
+            }
 
             if (state == ClientState::ConnectScreen) {
                 // ��������� ����� �� ���� �����
@@ -1930,6 +1948,95 @@ int main() {
             healthText.setFillColor(sf::Color::Green);
             healthText.setPosition(20.0f, 60.0f);
             window.draw(healthText);
+            
+            // Update inventory animation
+            const float ANIMATION_DURATION = 0.3f; // 300ms animation
+            if (inventoryOpen && inventoryAnimationProgress < 1.0f) {
+                // Opening animation
+                inventoryAnimationProgress = std::min(1.0f, inventoryAnimationClock.getElapsedTime().asSeconds() / ANIMATION_DURATION);
+            } else if (!inventoryOpen && inventoryAnimationProgress > 0.0f) {
+                // Closing animation
+                inventoryAnimationProgress = std::max(0.0f, 1.0f - (inventoryAnimationClock.getElapsedTime().asSeconds() / ANIMATION_DURATION));
+            }
+            
+            // Draw inventory with animation
+            if (inventoryAnimationProgress > 0.0f) {
+                // Smooth easing function (ease-out cubic)
+                float easedProgress = 1.0f - std::pow(1.0f - inventoryAnimationProgress, 3.0f);
+                
+                // Calculate inventory position (centered at bottom)
+                float inventoryWidth = INVENTORY_SLOTS * INVENTORY_SLOT_SIZE + (INVENTORY_SLOTS - 1) * INVENTORY_PADDING;
+                float inventoryX = (windowSize.x - inventoryWidth) / 2.0f; // Center horizontally
+                float inventoryY = windowSize.y - INVENTORY_SLOT_SIZE - 20.0f; // 20px margin from bottom
+                
+                // Ensure inventory doesn't go off-screen
+                if (inventoryX < 20.0f) {
+                    inventoryX = 20.0f; // Minimum 20px margin from left
+                }
+                
+                // Slide up animation
+                float slideOffset = (1.0f - easedProgress) * (INVENTORY_SLOT_SIZE + 40.0f);
+                inventoryY += slideOffset;
+                
+                // Calculate alpha for fade-in effect
+                sf::Uint8 alpha = static_cast<sf::Uint8>(easedProgress * 255);
+                
+                // Draw inventory slots
+                #ifdef _DEBUG
+                static bool debugPrinted = false;
+                if (!debugPrinted && inventoryOpen) {
+                    std::cout << "[DEBUG] Inventory rendering:" << std::endl;
+                    std::cout << "  Window size: " << windowSize.x << "x" << windowSize.y << std::endl;
+                    std::cout << "  Inventory width: " << inventoryWidth << std::endl;
+                    std::cout << "  Inventory X: " << inventoryX << std::endl;
+                    std::cout << "  Inventory Y: " << inventoryY << std::endl;
+                    std::cout << "  Slots: " << INVENTORY_SLOTS << std::endl;
+                    debugPrinted = true;
+                }
+                #endif
+                
+                for (int i = 0; i < INVENTORY_SLOTS; i++) {
+                    float slotX = inventoryX + i * (INVENTORY_SLOT_SIZE + INVENTORY_PADDING);
+                    
+                    // Staggered animation - each slot appears slightly after the previous one
+                    float slotDelay = i * 0.05f; // 50ms delay per slot
+                    float slotProgress = std::max(0.0f, std::min(1.0f, (inventoryAnimationProgress - slotDelay) / (1.0f - slotDelay * INVENTORY_SLOTS)));
+                    float slotEasedProgress = 1.0f - std::pow(1.0f - slotProgress, 3.0f);
+                    sf::Uint8 slotAlpha = static_cast<sf::Uint8>(slotEasedProgress * 200);
+                    
+                    // Scale animation for each slot
+                    float scale = 0.5f + slotEasedProgress * 0.5f; // Scale from 50% to 100%
+                    float scaledSize = INVENTORY_SLOT_SIZE * scale;
+                    float scaleOffset = (INVENTORY_SLOT_SIZE - scaledSize) / 2.0f;
+                    
+                    // Create slot rectangle
+                    sf::RectangleShape slot(sf::Vector2f(scaledSize, scaledSize));
+                    slot.setPosition(slotX + scaleOffset, inventoryY + scaleOffset);
+                    slot.setFillColor(sf::Color(50, 50, 50, slotAlpha)); // Dark semi-transparent
+                    slot.setOutlineColor(sf::Color(150, 150, 150, static_cast<sf::Uint8>(slotEasedProgress * 255))); // Light gray border
+                    slot.setOutlineThickness(2.0f);
+                    
+                    window.draw(slot);
+                    
+                    // Draw slot number
+                    if (slotEasedProgress > 0.3f) { // Show text after slot is 30% visible
+                        sf::Text slotNumber;
+                        slotNumber.setFont(font);
+                        slotNumber.setString(std::to_string(i + 1));
+                        slotNumber.setCharacterSize(static_cast<unsigned int>(32 * scale)); // Scale text with slot
+                        slotNumber.setFillColor(sf::Color(255, 255, 255, static_cast<sf::Uint8>(slotEasedProgress * 255)));
+                        
+                        // Center the number in the slot
+                        sf::FloatRect textBounds = slotNumber.getLocalBounds();
+                        slotNumber.setPosition(
+                            slotX + scaleOffset + (scaledSize - textBounds.width) / 2.0f - textBounds.left,
+                            inventoryY + scaleOffset + (scaledSize - textBounds.height) / 2.0f - textBounds.top
+                        );
+                        
+                        window.draw(slotNumber);
+                    }
+                }
+            }
             
             // Apply screen darkening effect if player is dead
             if (!clientIsAlive) {
