@@ -2064,7 +2064,7 @@ int main() {
             // Display connection lost screen
             sf::Text connectionLostText;
             connectionLostText.setFont(font);
-            connectionLostText.setString("Connection lost. Press R to reconnect to " + serverIP);
+            connectionLostText.setString("Connection lost. Press J to reconnect to " + serverIP);
             connectionLostText.setCharacterSize(32);
             connectionLostText.setFillColor(sf::Color::Red);
             
@@ -2077,7 +2077,7 @@ int main() {
             window.draw(connectionLostText);
             
             // Handle R key for reconnection
-            if (sf::Keyboard::isKeyPressed(sf::Keyboard::R)) {
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::J)) {
                 ErrorHandler::logInfo("Attempting to reconnect to " + serverIP);
                 
                 // Stop UDP thread

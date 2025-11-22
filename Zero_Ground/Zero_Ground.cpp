@@ -1859,17 +1859,92 @@ sf::Vector2f lerpPosition(sf::Vector2f start, sf::Vector2f end, float alpha) {
 }
 
 // ========================
+// Random Spawn Generation
+// ========================
+
+// Generate random spawn positions with minimum distance constraint
+// Parameters:
+//   grid - The cell grid to check for wall collisions
+//   minDistance - Minimum distance between spawn points (in pixels)
+// Returns: pair of positions (server spawn, client spawn)
+//
+// ALGORITHM:
+// 1. Generate random position for server player
+// 2. Check if position is valid (no wall collision)
+// 3. Generate random position for client player
+// 4. Check if position is valid and distance >= minDistance
+// 5. Retry if constraints not met (max 100 attempts)
+std::pair<Position, Position> generateRandomSpawns(const std::vector<std::vector<Cell>>& grid, float minDistance = 2100.0f) {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    
+    // Generate positions with margin from edges (at least 1 cell = 100 pixels)
+    const float MARGIN = CELL_SIZE;
+    std::uniform_real_distribution<float> xDist(MARGIN, MAP_SIZE - MARGIN);
+    std::uniform_real_distribution<float> yDist(MARGIN, MAP_SIZE - MARGIN);
+    
+    const int MAX_ATTEMPTS = 100;
+    
+    for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
+        // Generate server spawn position
+        Position serverSpawn;
+        serverSpawn.x = xDist(gen);
+        serverSpawn.y = yDist(gen);
+        
+        // Check if server spawn is valid (no wall collision)
+        if (checkCollision(sf::Vector2f(serverSpawn.x, serverSpawn.y), grid)) {
+            continue; // Try again
+        }
+        
+        // Generate client spawn position
+        Position clientSpawn;
+        clientSpawn.x = xDist(gen);
+        clientSpawn.y = yDist(gen);
+        
+        // Check if client spawn is valid (no wall collision)
+        if (checkCollision(sf::Vector2f(clientSpawn.x, clientSpawn.y), grid)) {
+            continue; // Try again
+        }
+        
+        // Check distance between spawns
+        float dx = serverSpawn.x - clientSpawn.x;
+        float dy = serverSpawn.y - clientSpawn.y;
+        float distance = std::sqrt(dx * dx + dy * dy);
+        
+        if (distance >= minDistance) {
+            // Success! Found valid spawn positions
+            std::cout << "[INFO] Generated random spawns:" << std::endl;
+            std::cout << "  Server spawn: (" << serverSpawn.x << ", " << serverSpawn.y << ")" << std::endl;
+            std::cout << "  Client spawn: (" << clientSpawn.x << ", " << clientSpawn.y << ")" << std::endl;
+            std::cout << "  Distance: " << distance << " pixels (" << (distance / CELL_SIZE) << " cells)" << std::endl;
+            std::cout << "  Attempts: " << (attempt + 1) << std::endl;
+            
+            return std::make_pair(serverSpawn, clientSpawn);
+        }
+    }
+    
+    // Failed to find valid spawns, use fallback positions
+    std::cerr << "[WARNING] Failed to generate random spawns after " << MAX_ATTEMPTS << " attempts" << std::endl;
+    std::cerr << "  Using fallback spawn positions" << std::endl;
+    
+    Position serverSpawn = { 250.0f, 4850.0f };
+    Position clientSpawn = { 4850.0f, 250.0f };
+    
+    return std::make_pair(serverSpawn, clientSpawn);
+}
+
+// ========================
 // Global State
 // ========================
 
 std::mutex mutex;
-Position serverPos = { 250.0f, 4850.0f }; // Server spawn position (bottom-left area of 5100x5100 map)
+Position serverPos = { 250.0f, 4850.0f }; // Server spawn position (will be randomized)
 Position serverPosPrevious = { 250.0f, 4850.0f }; // Previous position for interpolation
 float serverHealth = 100.0f; // Server player health (0-100)
 int serverScore = 0; // Server player score
 bool serverIsAlive = true; // Server player alive status
 std::map<sf::IpAddress, Position> clients;
-Position clientPos = { 4850.0f, 250.0f }; // Client position (for interpolation)
+Position clientPos = { 4850.0f, 250.0f }; // Client position (will be randomized)
 Position clientPosPrevious = { 4850.0f, 250.0f }; // Previous client position
 Position clientPosTarget = { 4850.0f, 250.0f }; // Target client position (latest received)
 GameMap gameMap;
@@ -2057,10 +2132,10 @@ void tcpListenerThread(sf::TcpListener* listener, const std::vector<std::vector<
                             ErrorHandler::logTCPError("Send server initial position", serverPosStatus, clientIP);
                         }
                         
-                        // Send client's spawn position (top-right area of 5000x5000 map)
+                        // Send client's spawn position (randomly generated)
                         PositionPacket clientPosPacket;
-                        clientPosPacket.x = 4750.0f;
-                        clientPosPacket.y = 250.0f;
+                        clientPosPacket.x = clientPos.x;
+                        clientPosPacket.y = clientPos.y;
                         clientPosPacket.isAlive = true;
                         clientPosPacket.frameID = 0;
                         clientPosPacket.playerId = 1; // Client is player 1
@@ -2286,6 +2361,16 @@ int main() {
         return -1;
     }
     std::cout << "Map generation complete, server ready to start\n" << std::endl;
+    
+    // Generate random spawn positions with minimum distance of 2100 pixels (21 cells)
+    std::cout << "\n=== Generating Random Spawn Positions ===" << std::endl;
+    auto spawns = generateRandomSpawns(grid, 2100.0f);
+    serverPos = spawns.first;
+    serverPosPrevious = spawns.first;
+    clientPos = spawns.second;
+    clientPosPrevious = spawns.second;
+    clientPosTarget = spawns.second;
+    std::cout << "Spawn generation complete\n" << std::endl;
     
     sf::TcpListener tcpListener;
     ErrorHandler::logInfo("=== Starting TCP Server ===");
