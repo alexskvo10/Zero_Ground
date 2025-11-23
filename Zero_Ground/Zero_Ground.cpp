@@ -3859,77 +3859,22 @@ int main() {
             
             // Draw money balance below health
             // Requirement 1.5: Display money balance in HUD
+            // Note: Money system not yet implemented, showing placeholder
             sf::Text moneyText;
             moneyText.setFont(font);
-            moneyText.setString("Money: $" + std::to_string(serverPlayer.money));
+            moneyText.setString("Money: $0");  // Placeholder until money system is implemented
             moneyText.setCharacterSize(28);
             moneyText.setFillColor(sf::Color::Yellow);
             moneyText.setPosition(20.0f, 100.0f);
             window.draw(moneyText);
             
             // Draw weapon info in top-right corner
-            // Requirements: 5.5, 5.6: Display weapon name and ammo count
-            Weapon* currentWeapon = serverPlayer.getActiveWeapon();
+            // Note: Weapon system not yet implemented, showing placeholder
             sf::Text weaponText;
             weaponText.setFont(font);
             weaponText.setCharacterSize(28);
             weaponText.setFillColor(sf::Color::White);
-            
-            if (currentWeapon != nullptr) {
-                std::string weaponInfo = currentWeapon->name + ": " + 
-                                        std::to_string(currentWeapon->currentAmmo) + "/" + 
-                                        std::to_string(currentWeapon->reserveAmmo);
-                if (currentWeapon->isReloading) {
-                    weaponInfo += " (Reloading...)";
-                }
-                weaponText.setString(weaponInfo);
-            } else {
-                weaponText.setString("Без оружия");  // "No weapon" in Russian
-            }
-            
-            // Position in top-right corner
-            float weaponTextX = windowSize.x - weaponText.getLocalBounds().width - 20.0f;
-            weaponText.setPosition(weaponTextX, 20.0f);
-            window.draw(weaponText);
-            
-            // Draw money balance below health
-            // Requirement 1.5: Display money balance below health in top-left corner
-            sf::Text moneyText;
-            moneyText.setFont(font);
-            // Get server player from game state
-            Player serverPlayer;
-            {
-                std::lock_guard<std::mutex> lock(mutex);
-                // For now, use a default player with starting money
-                // TODO: Get actual server player from game state
-                serverPlayer.money = 50000;  // Default starting money
-            }
-            moneyText.setString("Money: $" + std::to_string(serverPlayer.money));
-            moneyText.setCharacterSize(28);
-            moneyText.setFillColor(sf::Color(255, 215, 0));  // Gold color
-            moneyText.setPosition(20.0f, 100.0f);
-            window.draw(moneyText);
-            
-            // Draw weapon info in top-right corner
-            // Requirements: 5.5, 5.6
-            sf::Text weaponText;
-            weaponText.setFont(font);
-            weaponText.setCharacterSize(28);
-            
-            // Get active weapon from server player
-            Weapon* activeWeapon = serverPlayer.getActiveWeapon();
-            if (activeWeapon != nullptr) {
-                // Requirement 5.5: Display weapon name and ammo count "[Name]: [current]/[reserve]"
-                std::string weaponInfo = activeWeapon->name + ": " + 
-                                        std::to_string(activeWeapon->currentAmmo) + "/" + 
-                                        std::to_string(activeWeapon->reserveAmmo);
-                weaponText.setString(weaponInfo);
-                weaponText.setFillColor(sf::Color::White);
-            } else {
-                // Requirement 5.6: Display "Без оружия" when no weapon active
-                weaponText.setString("Без оружия");  // "No weapon" in Russian
-                weaponText.setFillColor(sf::Color(150, 150, 150));  // Gray color
-            }
+            weaponText.setString("Без оружия");  // "No weapon" in Russian
             
             // Position in top-right corner
             sf::FloatRect weaponBounds = weaponText.getLocalBounds();
