@@ -290,6 +290,42 @@ struct Weapon {
     }
 };
 
+// ========================
+// Player Methods Implementation
+// ========================
+
+// Get player movement speed based on active weapon
+// Requirements: 5.3, 5.4
+float Player::getMovementSpeed() const {
+    Weapon* activeWeapon = const_cast<Player*>(this)->getActiveWeapon();
+    if (activeWeapon != nullptr) {
+        return activeWeapon->movementSpeed;
+    }
+    return 3.0f;  // Base speed when no weapon is active
+}
+
+// ========================
+// Player Initialization
+// ========================
+
+// Initialize a player with starting equipment
+// Requirements: 1.1, 1.2, 1.3
+void initializePlayer(Player& player) {
+    // Requirement 1.1: Equip USP in slot 0
+    player.inventory[0] = Weapon::create(Weapon::USP);
+    
+    // Requirement 1.3: Initialize slots 1-3 as empty
+    player.inventory[1] = nullptr;
+    player.inventory[2] = nullptr;
+    player.inventory[3] = nullptr;
+    
+    // Requirement 1.2: Set initial money to 50,000 (already set in struct default)
+    player.money = 50000;
+    
+    // Set active slot to 0 (USP equipped)
+    player.activeSlot = 0;
+}
+
 struct Shop {
     int gridX = 0;
     int gridY = 0;              // Position in 51×51 grid
@@ -337,15 +373,6 @@ struct Bullet {
         return false;
     }
 };
-
-// Implementation of Player::getMovementSpeed (defined after Weapon struct)
-float Player::getMovementSpeed() const {
-    Weapon* active = const_cast<Player*>(this)->getActiveWeapon();
-    if (active != nullptr) {
-        return active->movementSpeed;
-    }
-    return 3.0f;  // Base speed when no weapon
-}
 
 // Forward declaration
 struct Quadtree;
@@ -1183,6 +1210,26 @@ struct PositionPacket {
 };
 
 // ========================
+// Weapon Shop Network Packets
+// ========================
+
+// Purchase packet (client → server)
+// Requirement 4.1-4.5: Purchase validation and transaction
+struct PurchasePacket {
+    uint8_t playerId;
+    uint8_t weaponType;  // Weapon::Type enum value
+};
+
+// Inventory update packet (server → all clients)
+// Sent after successful purchase to synchronize inventory
+struct InventoryPacket {
+    uint8_t playerId;
+    uint8_t slot;        // Which slot changed (0-3)
+    uint8_t weaponType;  // Weapon::Type enum value, 255 = empty slot
+    int newMoneyBalance;
+};
+
+// ========================
 // Packet Validation Functions
 // ========================
 
@@ -1795,6 +1842,388 @@ void updateCamera(sf::RenderWindow& window, sf::Vector2f playerPosition) {
 // ========================
 // NEW: Fog of War Background Rendering
 // ========================
+
+// ========================
+// Purchase Status System
+// ========================
+
+// Enum for purchase status
+// Requirement 3.5: Show purchase status
+enum class PurchaseStatus {
+    Purchasable,
+    InsufficientFunds,
+    InventoryFull
+};
+
+// Calculate purchase status for a player and weapon
+// Requirement 3.5: Purchase status calculation
+PurchaseStatus calculatePurchaseStatus(const Player& player, const Weapon* weapon) {
+    // Check if inventory is full
+    if (!player.hasInventorySpace()) {
+        return PurchaseStatus::InventoryFull;
+    }
+    
+    // Check if player has sufficient funds
+    if (player.money < weapon->price) {
+        return PurchaseStatus::InsufficientFunds;
+    }
+    
+    // Player can purchase
+    return PurchaseStatus::Purchasable;
+}
+
+// Get purchase status text in Russian
+std::string getPurchaseStatusText(PurchaseStatus status, int weaponPrice) {
+    switch (status) {
+        case PurchaseStatus::Purchasable:
+            return "Можно купить";  // "Can purchase"
+        case PurchaseStatus::InsufficientFunds:
+            return "Недостаточно денег. Требуется: " + std::to_string(weaponPrice);  // "Insufficient funds. Required: [amount]"
+        case PurchaseStatus::InventoryFull:
+            return "Инвентарь заполнен. Освободите ячейку для покупки.";  // "Inventory full. Free a slot to purchase."
+        default:
+            return "";
+    }
+}
+
+// Get purchase status color
+sf::Color getPurchaseStatusColor(PurchaseStatus status) {
+    switch (status) {
+        case PurchaseStatus::Purchasable:
+            return sf::Color::Green;
+        case PurchaseStatus::InsufficientFunds:
+            return sf::Color::Red;
+        case PurchaseStatus::InventoryFull:
+            return sf::Color::Yellow;
+        default:
+            return sf::Color::White;
+    }
+}
+
+// ========================
+// Purchase Validation and Transaction Logic
+// ========================
+
+// Process weapon purchase request from client
+// Requirements: 4.1, 4.2, 4.3, 4.4, 4.5
+// Returns: true if purchase successful, false otherwise
+bool processPurchase(Player& player, Weapon::Type weaponType) {
+    // Create weapon to get price
+    Weapon* weapon = Weapon::create(weaponType);
+    
+    // Requirement 4.1: Validate player has sufficient money
+    if (player.money < weapon->price) {
+        std::cout << "[PURCHASE] Player " << player.id << " has insufficient funds: " 
+                  << player.money << " < " << weapon->price << std::endl;
+        delete weapon;
+        return false;
+    }
+    
+    // Requirement 4.2: Validate player has empty inventory slot
+    if (!player.hasInventorySpace()) {
+        std::cout << "[PURCHASE] Player " << player.id << " has full inventory" << std::endl;
+        delete weapon;
+        return false;
+    }
+    
+    // Get first empty slot
+    int emptySlot = player.getFirstEmptySlot();
+    if (emptySlot < 0) {
+        // This shouldn't happen if hasInventorySpace() returned true, but check anyway
+        std::cerr << "[ERROR] hasInventorySpace() returned true but getFirstEmptySlot() returned -1" << std::endl;
+        delete weapon;
+        return false;
+    }
+    
+    // Requirement 4.3: Deduct weapon price from player money
+    player.money -= weapon->price;
+    
+    // Requirement 4.4: Add weapon to first empty inventory slot
+    player.inventory[emptySlot] = weapon;
+    
+    // Requirement 4.5: Weapon is already initialized with full magazine and reserve ammo
+    // (This is done in Weapon::create())
+    
+    std::cout << "[PURCHASE] Player " << player.id << " purchased " << weapon->name 
+              << " for $" << weapon->price << " in slot " << emptySlot 
+              << ". New balance: $" << player.money << std::endl;
+    
+    return true;
+}
+
+// ========================
+// Shop UI Rendering System
+// ========================
+
+// Render shop UI with three columns
+// Requirements: 3.2, 3.3, 3.4, 3.5
+void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font& font, float animationProgress) {
+    sf::Vector2u windowSize = window.getSize();
+    
+    // Shop UI dimensions
+    const float UI_WIDTH = 1000.0f;
+    const float UI_HEIGHT = 700.0f;
+    const float UI_X = (windowSize.x - UI_WIDTH) / 2.0f;
+    const float UI_Y = (windowSize.y - UI_HEIGHT) / 2.0f;
+    
+    // Smooth easing function (ease-out cubic)
+    float easedProgress = 1.0f - std::pow(1.0f - animationProgress, 3.0f);
+    
+    // Scale animation
+    float scale = 0.7f + easedProgress * 0.3f;  // Scale from 70% to 100%
+    float scaledWidth = UI_WIDTH * scale;
+    float scaledHeight = UI_HEIGHT * scale;
+    float scaledX = UI_X + (UI_WIDTH - scaledWidth) / 2.0f;
+    float scaledY = UI_Y + (UI_HEIGHT - scaledHeight) / 2.0f;
+    
+    // Alpha for fade-in
+    sf::Uint8 alpha = static_cast<sf::Uint8>(easedProgress * 230);
+    
+    // Draw semi-transparent background overlay
+    sf::RectangleShape overlay(sf::Vector2f(windowSize.x, windowSize.y));
+    overlay.setFillColor(sf::Color(0, 0, 0, static_cast<sf::Uint8>(easedProgress * 180)));
+    window.draw(overlay);
+    
+    // Draw main shop panel
+    sf::RectangleShape shopPanel(sf::Vector2f(scaledWidth, scaledHeight));
+    shopPanel.setPosition(scaledX, scaledY);
+    shopPanel.setFillColor(sf::Color(40, 40, 40, alpha));
+    shopPanel.setOutlineColor(sf::Color(100, 100, 100, static_cast<sf::Uint8>(easedProgress * 255)));
+    shopPanel.setOutlineThickness(3.0f);
+    window.draw(shopPanel);
+    
+    // Draw title
+    sf::Text titleText;
+    titleText.setFont(font);
+    titleText.setString("МАГАЗИН ОРУЖИЯ");  // "WEAPON SHOP"
+    titleText.setCharacterSize(static_cast<unsigned int>(40 * scale));
+    titleText.setFillColor(sf::Color(255, 255, 255, static_cast<sf::Uint8>(easedProgress * 255)));
+    sf::FloatRect titleBounds = titleText.getLocalBounds();
+    titleText.setPosition(
+        scaledX + (scaledWidth - titleBounds.width) / 2.0f - titleBounds.left,
+        scaledY + 20.0f * scale
+    );
+    window.draw(titleText);
+    
+    // Draw player money
+    sf::Text moneyText;
+    moneyText.setFont(font);
+    moneyText.setString("Деньги: $" + std::to_string(player.money));  // "Money: $"
+    moneyText.setCharacterSize(static_cast<unsigned int>(28 * scale));
+    moneyText.setFillColor(sf::Color(100, 255, 100, static_cast<sf::Uint8>(easedProgress * 255)));
+    moneyText.setPosition(scaledX + 20.0f * scale, scaledY + 70.0f * scale);
+    window.draw(moneyText);
+    
+    // Column dimensions
+    const float COLUMN_WIDTH = (scaledWidth - 80.0f * scale) / 3.0f;
+    const float COLUMN_HEIGHT = scaledHeight - 150.0f * scale;
+    const float COLUMN_Y = scaledY + 120.0f * scale;
+    const float COLUMN_PADDING = 20.0f * scale;
+    
+    // Define weapon categories
+    // Requirement 3.3: Three categories
+    struct WeaponCategory {
+        std::string name;
+        std::vector<Weapon::Type> weapons;
+    };
+    
+    std::vector<WeaponCategory> categories = {
+        {"Пистолеты", {Weapon::USP, Weapon::GLOCK, Weapon::FIVESEVEN, Weapon::R8}},  // "Pistols"
+        {"Автоматы", {Weapon::GALIL, Weapon::M4, Weapon::AK47}},  // "Rifles"
+        {"Снайперки", {Weapon::M10, Weapon::AWP, Weapon::M40}}  // "Snipers"
+    };
+    
+    // Draw each column
+    for (size_t col = 0; col < categories.size(); col++) {
+        float columnX = scaledX + 20.0f * scale + col * (COLUMN_WIDTH + COLUMN_PADDING);
+        
+        // Draw column background
+        sf::RectangleShape columnBg(sf::Vector2f(COLUMN_WIDTH, COLUMN_HEIGHT));
+        columnBg.setPosition(columnX, COLUMN_Y);
+        columnBg.setFillColor(sf::Color(30, 30, 30, alpha));
+        columnBg.setOutlineColor(sf::Color(80, 80, 80, static_cast<sf::Uint8>(easedProgress * 255)));
+        columnBg.setOutlineThickness(2.0f);
+        window.draw(columnBg);
+        
+        // Draw column title
+        sf::Text columnTitle;
+        columnTitle.setFont(font);
+        columnTitle.setString(categories[col].name);
+        columnTitle.setCharacterSize(static_cast<unsigned int>(26 * scale));
+        columnTitle.setFillColor(sf::Color(255, 200, 100, static_cast<sf::Uint8>(easedProgress * 255)));
+        sf::FloatRect columnTitleBounds = columnTitle.getLocalBounds();
+        columnTitle.setPosition(
+            columnX + (COLUMN_WIDTH - columnTitleBounds.width) / 2.0f - columnTitleBounds.left,
+            COLUMN_Y + 10.0f * scale
+        );
+        window.draw(columnTitle);
+        
+        // Draw weapons in this column
+        float weaponY = COLUMN_Y + 50.0f * scale;
+        const float WEAPON_HEIGHT = 120.0f * scale;
+        const float WEAPON_PADDING = 10.0f * scale;
+        
+        for (Weapon::Type weaponType : categories[col].weapons) {
+            // Create weapon to get stats
+            Weapon* weapon = Weapon::create(weaponType);
+            
+            // Calculate purchase status
+            // Requirement 3.5: Show purchase status
+            PurchaseStatus status = calculatePurchaseStatus(player, weapon);
+            
+            // Draw weapon panel
+            sf::RectangleShape weaponPanel(sf::Vector2f(COLUMN_WIDTH - 20.0f * scale, WEAPON_HEIGHT));
+            weaponPanel.setPosition(columnX + 10.0f * scale, weaponY);
+            
+            // Color based on purchase status
+            if (status == PurchaseStatus::Purchasable) {
+                weaponPanel.setFillColor(sf::Color(50, 70, 50, alpha));  // Green tint
+                weaponPanel.setOutlineColor(sf::Color(100, 200, 100, static_cast<sf::Uint8>(easedProgress * 255)));
+            } else {
+                weaponPanel.setFillColor(sf::Color(50, 50, 50, alpha));  // Gray
+                weaponPanel.setOutlineColor(sf::Color(100, 100, 100, static_cast<sf::Uint8>(easedProgress * 255)));
+            }
+            weaponPanel.setOutlineThickness(1.0f);
+            window.draw(weaponPanel);
+            
+            // Draw weapon name
+            // Requirement 3.4: Display weapon name
+            sf::Text weaponName;
+            weaponName.setFont(font);
+            weaponName.setString(weapon->name);
+            weaponName.setCharacterSize(static_cast<unsigned int>(20 * scale));
+            weaponName.setFillColor(sf::Color(255, 255, 255, static_cast<sf::Uint8>(easedProgress * 255)));
+            weaponName.setPosition(columnX + 15.0f * scale, weaponY + 5.0f * scale);
+            window.draw(weaponName);
+            
+            // Draw weapon price
+            // Requirement 3.4: Display price
+            sf::Text weaponPrice;
+            weaponPrice.setFont(font);
+            weaponPrice.setString("$" + std::to_string(weapon->price));
+            weaponPrice.setCharacterSize(static_cast<unsigned int>(18 * scale));
+            weaponPrice.setFillColor(sf::Color(255, 215, 0, static_cast<sf::Uint8>(easedProgress * 255)));  // Gold color
+            weaponPrice.setPosition(columnX + 15.0f * scale, weaponY + 28.0f * scale);
+            window.draw(weaponPrice);
+            
+            // Draw weapon stats
+            // Requirement 3.4: Display damage and magazine size
+            sf::Text weaponStats;
+            weaponStats.setFont(font);
+            std::ostringstream statsStream;
+            statsStream << "Урон: " << static_cast<int>(weapon->damage) << "\n";  // "Damage: "
+            statsStream << "Магазин: " << weapon->magazineSize;  // "Magazine: "
+            weaponStats.setString(statsStream.str());
+            weaponStats.setCharacterSize(static_cast<unsigned int>(16 * scale));
+            weaponStats.setFillColor(sf::Color(200, 200, 200, static_cast<sf::Uint8>(easedProgress * 255)));
+            weaponStats.setPosition(columnX + 15.0f * scale, weaponY + 50.0f * scale);
+            window.draw(weaponStats);
+            
+            // Draw purchase status
+            // Requirement 3.5: Show purchase status
+            sf::Text statusText;
+            statusText.setFont(font);
+            statusText.setString(getPurchaseStatusText(status, weapon->price));
+            statusText.setCharacterSize(static_cast<unsigned int>(14 * scale));
+            sf::Color statusColor = getPurchaseStatusColor(status);
+            statusText.setFillColor(sf::Color(statusColor.r, statusColor.g, statusColor.b, static_cast<sf::Uint8>(easedProgress * 255)));
+            statusText.setPosition(columnX + 15.0f * scale, weaponY + 90.0f * scale);
+            window.draw(statusText);
+            
+            weaponY += WEAPON_HEIGHT + WEAPON_PADDING;
+            
+            delete weapon;
+        }
+    }
+    
+    // Draw close instruction
+    sf::Text closeText;
+    closeText.setFont(font);
+    closeText.setString("Нажмите B чтобы закрыть");  // "Press B to close"
+    closeText.setCharacterSize(static_cast<unsigned int>(22 * scale));
+    closeText.setFillColor(sf::Color(200, 200, 200, static_cast<sf::Uint8>(easedProgress * 255)));
+    sf::FloatRect closeBounds = closeText.getLocalBounds();
+    closeText.setPosition(
+        scaledX + (scaledWidth - closeBounds.width) / 2.0f - closeBounds.left,
+        scaledY + scaledHeight - 40.0f * scale
+    );
+    window.draw(closeText);
+}
+
+// Check if player is near any shop and render interaction prompt
+// Requirement 3.1: Display prompt when player within 60 pixels
+void renderShopInteractionPrompt(sf::RenderWindow& window, sf::Vector2f playerPosition, 
+                                 const std::vector<Shop>& shops, const sf::Font& font) {
+    const float INTERACTION_RANGE = 60.0f;  // 60 pixels interaction range
+    
+    // Check if player is near any shop
+    bool nearShop = false;
+    for (const auto& shop : shops) {
+        if (shop.isPlayerNear(playerPosition.x, playerPosition.y)) {
+            nearShop = true;
+            break;
+        }
+    }
+    
+    // Display prompt if near a shop
+    if (nearShop) {
+        // Get window size for UI positioning
+        sf::Vector2u windowSize = window.getSize();
+        
+        // Create prompt text
+        sf::Text promptText;
+        promptText.setFont(font);
+        promptText.setString("Нажмите B для покупки");  // "Press B to purchase"
+        promptText.setCharacterSize(28);
+        promptText.setFillColor(sf::Color::White);
+        promptText.setOutlineColor(sf::Color::Black);
+        promptText.setOutlineThickness(2.0f);
+        
+        // Position at bottom center of screen
+        sf::FloatRect textBounds = promptText.getLocalBounds();
+        promptText.setPosition(
+            windowSize.x / 2.0f - textBounds.width / 2.0f - textBounds.left,
+            windowSize.y - 120.0f  // 120px from bottom (above inventory hint)
+        );
+        
+        window.draw(promptText);
+    }
+}
+
+// Render shops with fog of war integration
+// Requirements: 2.6, 3.1, 10.5
+void renderShops(sf::RenderWindow& window, sf::Vector2f playerPosition, const std::vector<Shop>& shops) {
+    const float SHOP_SIZE = 20.0f;  // 20×20 pixel red square
+    const sf::Color shopColor(255, 0, 0);  // Red color for shops
+    
+    for (const auto& shop : shops) {
+        // Calculate distance from player to shop center
+        float dx = shop.worldX - playerPosition.x;
+        float dy = shop.worldY - playerPosition.y;
+        float distance = std::sqrt(dx * dx + dy * dy);
+        
+        // Calculate fog alpha (same as other entities for consistency)
+        // Requirement 10.5: Fog of war consistency for shops
+        sf::Uint8 alpha = calculateFogAlpha(distance);
+        
+        // Only render if visible (alpha > 0)
+        if (alpha > 0) {
+            // Create shop visual as 20×20 red square
+            // Requirement 2.6: Render each shop as 20×20 red square at grid cell center
+            sf::RectangleShape shopRect(sf::Vector2f(SHOP_SIZE, SHOP_SIZE));
+            
+            // Position at grid cell center (worldX and worldY are already at center)
+            // Offset by half the shop size to center the square
+            shopRect.setPosition(shop.worldX - SHOP_SIZE / 2.0f, shop.worldY - SHOP_SIZE / 2.0f);
+            
+            // Apply fog to shop color
+            sf::Color foggedColor(shopColor.r, shopColor.g, shopColor.b, alpha);
+            shopRect.setFillColor(foggedColor);
+            
+            window.draw(shopRect);
+        }
+    }
+}
 
 // Render background with smooth fog of war gradient effect
 // The background gets darker the further it is from the player (pixel-based gradient)
@@ -2883,6 +3312,14 @@ int main() {
     }
     std::cout << "Shop generation complete\n" << std::endl;
     
+    // Initialize server player with starting equipment
+    // Requirements: 1.1, 1.2, 1.3
+    Player serverPlayer;
+    initializePlayer(serverPlayer);
+    serverPlayer.x = serverPos.x;
+    serverPlayer.y = serverPos.y;
+    std::cout << "Server player initialized with USP and $50,000\n" << std::endl;
+    
     sf::TcpListener tcpListener;
     ErrorHandler::logInfo("=== Starting TCP Server ===");
     ErrorHandler::logInfo("Attempting to bind to port 53000...");
@@ -2929,6 +3366,11 @@ int main() {
     sf::UdpSocket udpSocket;
     std::thread udpWorker;
     bool udpThreadStarted = false;
+    
+    // Shop system
+    bool shopUIOpen = false;  // Shop UI state
+    sf::Clock shopAnimationClock;
+    float shopAnimationProgress = 0.0f;  // 0.0 = closed, 1.0 = fully open
     
     // Inventory system
     const int INVENTORY_SLOTS = 6;
@@ -3056,6 +3498,110 @@ int main() {
                     inventoryAnimationClock.restart(); // Start animation
                     ErrorHandler::logInfo(inventoryOpen ? "Inventory opened" : "Inventory closed");
                 }
+                
+                // Toggle shop UI with B key when near a shop
+                // Requirement 3.2: Handle B key press to open/close shop
+                if (event.key.code == sf::Keyboard::B) {
+                    // Check if player is near any shop
+                    bool nearShop = false;
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        for (const auto& shop : shops) {
+                            if (shop.isPlayerNear(serverPos.x, serverPos.y)) {
+                                nearShop = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Only toggle if near a shop or closing
+                    if (nearShop || shopUIOpen) {
+                        shopUIOpen = !shopUIOpen;
+                        shopAnimationClock.restart();  // Start animation
+                        ErrorHandler::logInfo(shopUIOpen ? "Shop UI opened" : "Shop UI closed");
+                    }
+                }
+                
+                // Weapon switching with keys 1-4
+                // Requirements: 5.1, 5.2, 5.3, 5.4
+                if (event.key.code == sf::Keyboard::Num1) {
+                    serverPlayer.switchWeapon(0);
+                    ErrorHandler::logInfo("Switched to weapon slot 1");
+                }
+                else if (event.key.code == sf::Keyboard::Num2) {
+                    serverPlayer.switchWeapon(1);
+                    ErrorHandler::logInfo("Switched to weapon slot 2");
+                }
+                else if (event.key.code == sf::Keyboard::Num3) {
+                    serverPlayer.switchWeapon(2);
+                    ErrorHandler::logInfo("Switched to weapon slot 3");
+                }
+                else if (event.key.code == sf::Keyboard::Num4) {
+                    serverPlayer.switchWeapon(3);
+                    ErrorHandler::logInfo("Switched to weapon slot 4");
+                }
+                
+                // Manual reload with R key
+                // Requirement 6.3: Handle R key for manual reload
+                if (event.key.code == sf::Keyboard::R) {
+                    Weapon* activeWeapon = serverPlayer.getActiveWeapon();
+                    if (activeWeapon != nullptr) {
+                        activeWeapon->startReload();
+                        ErrorHandler::logInfo("Manual reload initiated for " + activeWeapon->name);
+                    }
+                }
+            }
+            
+            // Handle mouse button press for shooting
+            // Requirement 6.1: Handle left mouse button click to fire weapon
+            if (event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Left) {
+                Weapon* activeWeapon = serverPlayer.getActiveWeapon();
+                if (activeWeapon != nullptr && !shopUIOpen && !inventoryOpen) {
+                    // Check if weapon can fire
+                    if (activeWeapon->canFire()) {
+                        // Get mouse position in world coordinates
+                        sf::Vector2i mousePixelPos = sf::Mouse::getPosition(window);
+                        sf::Vector2f mouseWorldPos = window.mapPixelToCoords(mousePixelPos);
+                        
+                        // Calculate bullet trajectory
+                        float dx = mouseWorldPos.x - serverPos.x;
+                        float dy = mouseWorldPos.y - serverPos.y;
+                        float distance = std::sqrt(dx * dx + dy * dy);
+                        
+                        if (distance > 0.001f) {  // Avoid division by zero
+                            // Normalize direction
+                            dx /= distance;
+                            dy /= distance;
+                            
+                            // Create bullet
+                            Bullet bullet;
+                            bullet.ownerId = 0;  // Server player ID
+                            bullet.x = serverPos.x;
+                            bullet.y = serverPos.y;
+                            bullet.vx = dx * activeWeapon->bulletSpeed;
+                            bullet.vy = dy * activeWeapon->bulletSpeed;
+                            bullet.damage = activeWeapon->damage;
+                            bullet.range = activeWeapon->range;
+                            bullet.maxRange = activeWeapon->range;
+                            bullet.weaponType = activeWeapon->type;
+                            
+                            // Fire weapon (consumes ammo)
+                            activeWeapon->fire();
+                            
+                            // TODO: Add bullet to active bullets list
+                            // TODO: Send shot packet to server/clients
+                            
+                            ErrorHandler::logInfo("Fired " + activeWeapon->name + " - Ammo: " + 
+                                                 std::to_string(activeWeapon->currentAmmo) + "/" + 
+                                                 std::to_string(activeWeapon->reserveAmmo));
+                        }
+                    }
+                    // Requirement 6.2: Trigger automatic reload when magazine empty
+                    else if (activeWeapon->currentAmmo == 0 && activeWeapon->reserveAmmo > 0) {
+                        activeWeapon->startReload();
+                        ErrorHandler::logInfo("Automatic reload triggered for " + activeWeapon->name);
+                    }
+                }
             }
 
             if (serverState.load() == ServerState::StartScreen) {
@@ -3149,6 +3695,13 @@ int main() {
             // Calculate delta time for frame-independent movement
             float deltaTime = deltaClock.restart().asSeconds();
             
+            // Update weapon reload state
+            // Requirement 6.4, 6.5: Update reload progress
+            Weapon* activeWeapon = serverPlayer.getActiveWeapon();
+            if (activeWeapon != nullptr) {
+                activeWeapon->updateReload(deltaTime);
+            }
+            
             // Update performance monitoring
             size_t playerCount = gameState.getPlayerCount() + 1; // +1 for server player
             // Count walls in the grid for performance monitoring
@@ -3180,10 +3733,12 @@ int main() {
                 sf::Vector2f newPos = oldPos;
                 
                 // Handle WASD input with delta time for frame-independent movement
-                if (sf::Keyboard::isKeyPressed(sf::Keyboard::W)) newPos.y -= MOVEMENT_SPEED * deltaTime * 60.0f;
-                if (sf::Keyboard::isKeyPressed(sf::Keyboard::S)) newPos.y += MOVEMENT_SPEED * deltaTime * 60.0f;
-                if (sf::Keyboard::isKeyPressed(sf::Keyboard::A)) newPos.x -= MOVEMENT_SPEED * deltaTime * 60.0f;
-                if (sf::Keyboard::isKeyPressed(sf::Keyboard::D)) newPos.x += MOVEMENT_SPEED * deltaTime * 60.0f;
+                // Requirements: 5.3, 5.4 - Use weapon-modified movement speed
+                float currentSpeed = serverPlayer.getMovementSpeed();
+                if (sf::Keyboard::isKeyPressed(sf::Keyboard::W)) newPos.y -= currentSpeed * deltaTime * 60.0f;
+                if (sf::Keyboard::isKeyPressed(sf::Keyboard::S)) newPos.y += currentSpeed * deltaTime * 60.0f;
+                if (sf::Keyboard::isKeyPressed(sf::Keyboard::A)) newPos.x -= currentSpeed * deltaTime * 60.0f;
+                if (sf::Keyboard::isKeyPressed(sf::Keyboard::D)) newPos.x += currentSpeed * deltaTime * 60.0f;
                 
                 // NEW: Apply cell-based collision detection
                 newPos = resolveCollisionCellBased(oldPos, newPos, grid);
@@ -3205,6 +3760,10 @@ int main() {
             
             // Render visible walls using cell-based system
             renderVisibleWalls(window, sf::Vector2f(serverPos.x, serverPos.y), grid);
+            
+            // Render shops with fog of war integration
+            // Requirements: 2.6, 3.1, 10.5
+            renderShops(window, sf::Vector2f(serverPos.x, serverPos.y), shops);
             
             // Update and render connected clients with interpolation
             {
@@ -3298,6 +3857,98 @@ int main() {
             healthText.setPosition(20.0f, 60.0f);
             window.draw(healthText);
             
+            // Draw money balance below health
+            // Requirement 1.5: Display money balance in HUD
+            sf::Text moneyText;
+            moneyText.setFont(font);
+            moneyText.setString("Money: $" + std::to_string(serverPlayer.money));
+            moneyText.setCharacterSize(28);
+            moneyText.setFillColor(sf::Color::Yellow);
+            moneyText.setPosition(20.0f, 100.0f);
+            window.draw(moneyText);
+            
+            // Draw weapon info in top-right corner
+            // Requirements: 5.5, 5.6: Display weapon name and ammo count
+            Weapon* currentWeapon = serverPlayer.getActiveWeapon();
+            sf::Text weaponText;
+            weaponText.setFont(font);
+            weaponText.setCharacterSize(28);
+            weaponText.setFillColor(sf::Color::White);
+            
+            if (currentWeapon != nullptr) {
+                std::string weaponInfo = currentWeapon->name + ": " + 
+                                        std::to_string(currentWeapon->currentAmmo) + "/" + 
+                                        std::to_string(currentWeapon->reserveAmmo);
+                if (currentWeapon->isReloading) {
+                    weaponInfo += " (Reloading...)";
+                }
+                weaponText.setString(weaponInfo);
+            } else {
+                weaponText.setString("Без оружия");  // "No weapon" in Russian
+            }
+            
+            // Position in top-right corner
+            float weaponTextX = windowSize.x - weaponText.getLocalBounds().width - 20.0f;
+            weaponText.setPosition(weaponTextX, 20.0f);
+            window.draw(weaponText);
+            
+            // Draw money balance below health
+            // Requirement 1.5: Display money balance below health in top-left corner
+            sf::Text moneyText;
+            moneyText.setFont(font);
+            // Get server player from game state
+            Player serverPlayer;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                // For now, use a default player with starting money
+                // TODO: Get actual server player from game state
+                serverPlayer.money = 50000;  // Default starting money
+            }
+            moneyText.setString("Money: $" + std::to_string(serverPlayer.money));
+            moneyText.setCharacterSize(28);
+            moneyText.setFillColor(sf::Color(255, 215, 0));  // Gold color
+            moneyText.setPosition(20.0f, 100.0f);
+            window.draw(moneyText);
+            
+            // Draw weapon info in top-right corner
+            // Requirements: 5.5, 5.6
+            sf::Text weaponText;
+            weaponText.setFont(font);
+            weaponText.setCharacterSize(28);
+            
+            // Get active weapon from server player
+            Weapon* activeWeapon = serverPlayer.getActiveWeapon();
+            if (activeWeapon != nullptr) {
+                // Requirement 5.5: Display weapon name and ammo count "[Name]: [current]/[reserve]"
+                std::string weaponInfo = activeWeapon->name + ": " + 
+                                        std::to_string(activeWeapon->currentAmmo) + "/" + 
+                                        std::to_string(activeWeapon->reserveAmmo);
+                weaponText.setString(weaponInfo);
+                weaponText.setFillColor(sf::Color::White);
+            } else {
+                // Requirement 5.6: Display "Без оружия" when no weapon active
+                weaponText.setString("Без оружия");  // "No weapon" in Russian
+                weaponText.setFillColor(sf::Color(150, 150, 150));  // Gray color
+            }
+            
+            // Position in top-right corner
+            sf::FloatRect weaponBounds = weaponText.getLocalBounds();
+            weaponText.setPosition(
+                windowSize.x - weaponBounds.width - 20.0f - weaponBounds.left,
+                20.0f
+            );
+            window.draw(weaponText);
+            
+            // Update shop UI animation
+            const float SHOP_ANIMATION_DURATION = 0.3f; // 300ms animation
+            if (shopUIOpen && shopAnimationProgress < 1.0f) {
+                // Opening animation
+                shopAnimationProgress = std::min(1.0f, shopAnimationClock.getElapsedTime().asSeconds() / SHOP_ANIMATION_DURATION);
+            } else if (!shopUIOpen && shopAnimationProgress > 0.0f) {
+                // Closing animation
+                shopAnimationProgress = std::max(0.0f, 1.0f - (shopAnimationClock.getElapsedTime().asSeconds() / SHOP_ANIMATION_DURATION));
+            }
+            
             // Update inventory animation
             const float ANIMATION_DURATION = 0.3f; // 300ms animation
             if (inventoryOpen && inventoryAnimationProgress < 1.0f) {
@@ -3306,6 +3957,24 @@ int main() {
             } else if (!inventoryOpen && inventoryAnimationProgress > 0.0f) {
                 // Closing animation
                 inventoryAnimationProgress = std::max(0.0f, 1.0f - (inventoryAnimationClock.getElapsedTime().asSeconds() / ANIMATION_DURATION));
+            }
+            
+            // Draw shop UI with animation
+            // Requirements: 3.2, 3.3, 3.4, 3.5
+            if (shopAnimationProgress > 0.0f) {
+                // Get current player for purchase status calculation
+                Player currentPlayer;
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    // Create a temporary player with current state
+                    currentPlayer.money = 50000;  // TODO: Get actual player money from server
+                    currentPlayer.inventory[0] = nullptr;  // TODO: Get actual inventory from server
+                    currentPlayer.inventory[1] = nullptr;
+                    currentPlayer.inventory[2] = nullptr;
+                    currentPlayer.inventory[3] = nullptr;
+                }
+                
+                renderShopUI(window, currentPlayer, font, shopAnimationProgress);
             }
             
             // Draw inventory with animation
@@ -3386,6 +4055,10 @@ int main() {
                     }
                 }
             }
+            
+            // Render shop interaction prompt if player is near a shop
+            // Requirement 3.1: Display prompt when player within 60 pixels
+            renderShopInteractionPrompt(window, sf::Vector2f(serverPos.x, serverPos.y), shops, font);
             
             // Draw inventory hint at bottom center
             sf::Text inventoryHint;

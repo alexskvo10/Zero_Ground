@@ -26,6 +26,8 @@ The implementation maintains the existing two-file architecture: Zero_Ground.cpp
 
 ## Requirements
 
+**IMPORTANT NOTE**: All client-side features (UI, rendering, HUD) must be implemented identically in both Zero_Ground.cpp (for host player) and Zero_Ground_client.cpp (for remote players) to ensure all players have the same experience.
+
 ### Requirement 1: Player Initial State
 
 **User Story:** As a player, I want to spawn with a starting weapon and money, so that I can immediately participate in combat and purchase upgrades.
@@ -36,7 +38,7 @@ The implementation maintains the existing two-file architecture: Zero_Ground.cpp
 2. WHEN a Player Entity spawns THEN the Game System SHALL set the Player Entity money balance to 50,000 dollars
 3. WHEN a Player Entity spawns THEN the Game System SHALL initialize inventory slots 1, 2, and 3 as empty
 4. WHEN a Player Entity with a USP weapon is active THEN the Game System SHALL set the Player Entity movement speed to 2.5 pixels per second
-5. WHEN the HUD renders THEN the Game System SHALL display the Player Entity money balance below the health indicator in the top-left corner
+5. WHEN the HUD renders THEN the Game System SHALL display the Player Entity money balance below the health indicator in the top-left corner (both host and remote clients)
 
 ### Requirement 2: Shop Generation and Placement
 
@@ -163,12 +165,13 @@ The implementation maintains the existing two-file architecture: Zero_Ground.cpp
 
 ### Requirement 12: System Architecture
 
-**User Story:** As a developer, I want to maintain the existing two-file architecture, so that the codebase remains simple and manageable.
+**User Story:** As a developer, I want to maintain the existing two-file architecture with consistent client experience, so that the codebase remains simple and all players see the same game.
 
 #### Acceptance Criteria
 
 1. WHEN implementing weapon system features THEN the Game System SHALL add all server-side logic to the existing Zero_Ground.cpp file
-2. WHEN implementing weapon system features THEN the Game System SHALL add all client-side logic to the existing Zero_Ground_client.cpp file
+2. WHEN implementing weapon system features THEN the Game System SHALL add all client-side rendering and UI code to BOTH Zero_Ground.cpp and Zero_Ground_client.cpp files identically
 3. WHEN implementing weapon system features THEN the Game System SHALL NOT introduce additional source files or external dependencies beyond SFML
 4. WHEN implementing data structures THEN the Game System SHALL define them inline within the respective cpp files
 5. WHEN implementing network protocols THEN the Game System SHALL use the existing UDP socket infrastructure on port 53001
+6. WHEN a host player runs Zero_Ground.cpp THEN the Game System SHALL provide the same visual experience (UI, HUD, bullets, effects) as remote players running Zero_Ground_client.cpp

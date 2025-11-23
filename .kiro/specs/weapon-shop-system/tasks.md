@@ -1,5 +1,11 @@
 # Implementation Plan
 
+**IMPORTANT**: All client-side tasks (rendering, UI, HUD) must be implemented in BOTH files:
+- Zero_Ground.cpp (for host player)
+- Zero_Ground_client.cpp (for remote players)
+
+This ensures all players have identical visual experience and functionality.
+
 - [x] 1. Define core weapon and shop data structures
 
 
@@ -38,39 +44,85 @@
   - **Property 4: Shop spawn distance constraint**
   - **Validates: Requirements 2.1, 2.2, 2.3**
 
-- [ ] 3. Implement player spawn initialization
+- [x] 3. Implement player spawn initialization
+
+
+
+
+
   - Modify player spawn logic to equip USP in slot 0
   - Initialize slots 1-3 as empty (nullptr)
   - Set initial money balance to 50,000
   - _Requirements: 1.1, 1.2, 1.3_
 
-- [ ] 3.1 Write property test for player spawn state
+- [x] 3.1 Write property test for player spawn state
+
+
   - **Property 1: Player spawn initialization**
   - **Validates: Requirements 1.1, 1.2, 1.3**
 
-- [ ] 4. Implement shop rendering on client
+- [x] 4. Implement shop rendering on both client files
+
+
+
+
+
+
+
+
+
+
   - Render each shop as 20×20 red square at grid cell center (x+40, y+40)
   - Implement shop visibility with fog of war integration
   - Display "Нажмите B для покупки" prompt when player within 60 pixels
+  - **Implement in BOTH Zero_Ground.cpp and Zero_Ground_client.cpp**
   - _Requirements: 2.6, 3.1, 10.5_
 
-- [ ] 4.1 Write property test for shop interaction range
+- [x] 4.1 Write property test for shop interaction range
+
+
+
+
+
+
   - **Property 5: Shop interaction range**
   - **Property 32: Fog of war consistency for shops**
   - **Validates: Requirements 3.1, 10.5**
 
-- [ ] 5. Implement shop UI interface on client
+- [x] 5. Implement shop UI interface on both client files
+
+
+
+
+
+
+
+
+
+
   - Create shop menu with three columns: "Пистолеты", "Автоматы", "Снайперки"
   - Display weapon name, price, damage, and magazine size for each weapon
   - Show purchase status (purchasable/insufficient funds/inventory full)
+  - **Implement in BOTH Zero_Ground.cpp and Zero_Ground_client.cpp**
   - Handle B key press to open/close shop when in range
   - _Requirements: 3.2, 3.3, 3.4, 3.5_
 
-- [ ] 5.1 Write property test for purchase status calculation
+- [x] 5.1 Write property test for purchase status calculation
+
+
+
+
   - **Property 6: Purchase status calculation**
   - **Validates: Requirements 3.5**
 
-- [ ] 6. Implement purchase validation and transaction logic on server
+- [x] 6. Implement purchase validation and transaction logic on server
+
+
+
+
+
+
+
   - Validate player has sufficient money for weapon price
   - Validate player has empty inventory slot
   - Deduct weapon price from player money on successful purchase
@@ -79,7 +131,11 @@
   - Send inventory update packet to all clients
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5_
 
-- [ ] 6.1 Write property tests for purchase mechanics
+- [x] 6.1 Write property tests for purchase mechanics
+
+
+
+
   - **Property 7: Insufficient funds prevents purchase**
   - **Property 8: Full inventory prevents purchase**
   - **Property 9: Purchase money deduction**
@@ -87,27 +143,46 @@
   - **Property 11: Purchased weapon initialization**
   - **Validates: Requirements 4.1, 4.2, 4.3, 4.4, 4.5**
 
-- [ ] 7. Implement inventory management and weapon switching
+- [x] 7. Implement inventory management and weapon switching on both client files
+
+
+
+
   - Handle keys 1-4 to activate corresponding inventory slots (0-3)
   - Set active weapon when non-empty slot selected
   - Clear active weapon and restore speed to 3.0 when empty slot selected
   - Apply weapon movement speed modifier when weapon is active
+  - **Implement in BOTH Zero_Ground.cpp and Zero_Ground_client.cpp**
   - _Requirements: 5.1, 5.2, 5.3, 5.4_
 
-- [ ] 7.1 Write property tests for inventory system
+- [x] 7.1 Write property tests for inventory system
+
+
   - **Property 12: Inventory slot activation**
   - **Property 13: Non-empty slot sets active weapon**
   - **Property 14: Empty slot clears weapon and restores speed**
   - **Property 15: Weapon speed modification**
   - **Validates: Requirements 5.1, 5.2, 5.3, 5.4**
 
-- [ ] 8. Implement HUD updates for weapon system
+- [x] 8. Implement HUD updates for weapon system on both client files
+
+
+
+
+
   - Display money balance below health in top-left corner
   - Display weapon name and ammo count "[Name]: [current]/[reserve]" in top-right when weapon active
   - Display "Без оружия" in top-right when no weapon active
+  - **Implement in BOTH Zero_Ground.cpp and Zero_Ground_client.cpp**
   - _Requirements: 1.5, 5.5, 5.6_
 
-- [ ] 9. Implement shooting mechanics on client
+- [x] 9. Implement shooting mechanics on both client files
+
+
+
+
+
+
   - Handle left mouse button click to fire weapon
   - Calculate bullet trajectory from player position toward cursor
   - Check magazine ammo > 0 before firing
@@ -115,27 +190,38 @@
   - Handle R key for manual reload
   - Prevent firing during reload
   - Send shot packet to server with bullet data
+  - **Implement in BOTH Zero_Ground.cpp and Zero_Ground_client.cpp**
   - _Requirements: 6.1, 6.2, 6.3, 6.4_
 
-- [ ] 9.1 Write property tests for shooting mechanics
+- [x] 9.1 Write property tests for shooting mechanics
+
+
+
   - **Property 16: Bullet creation on valid shot**
   - **Property 17: Empty magazine triggers reload**
   - **Property 18: Manual reload initiation**
   - **Property 19: Reload prevents firing**
   - **Validates: Requirements 6.1, 6.2, 6.3, 6.4**
 
-- [ ] 10. Implement reload mechanics
+- [x] 10. Implement reload mechanics on both client files
+
+
+
   - Track reload state and timer for each weapon
   - Transfer ammo from reserve to magazine on reload completion
   - Handle case where reserve < magazine capacity
   - Update HUD ammo display during reload
+  - **Implement in BOTH Zero_Ground.cpp and Zero_Ground_client.cpp**
   - _Requirements: 6.5_
 
-- [ ] 10.1 Write property test for reload ammo transfer
+- [x] 10.1 Write property test for reload ammo transfer
+
+
+
   - **Property 20: Reload ammo transfer**
   - **Validates: Requirements 6.5**
 
-- [ ] 11. Implement bullet physics and rendering on client
+- [ ] 11. Implement bullet physics and rendering on both client files
   - Create bullet entity on fire with position, velocity, and damage
   - Update bullet position each frame based on velocity and deltaTime
   - Render bullets as white lines (5px length, 2px width)
@@ -143,6 +229,7 @@
   - Remove bullets outside screen area + 20% buffer
   - Remove bullets outside map boundaries (0-5100px)
   - Enforce maximum 20 active bullets per player
+  - **Implement in BOTH Zero_Ground.cpp and Zero_Ground_client.cpp**
   - _Requirements: 7.1, 7.2, 7.5, 10.1, 10.2, 10.3_
 
 - [ ] 11.1 Write property tests for bullet behavior
@@ -181,10 +268,11 @@
   - **Property 28: Respawn health restoration**
   - **Validates: Requirements 8.1, 8.3, 8.4, 8.5**
 
-- [ ] 14. Implement damage visualization on client
+- [ ] 14. Implement damage visualization on both client files
   - Display floating red text "-[damage]" above hit player
   - Animate text moving upward for 1 second
   - Use font size 24px in red color
+  - **Implement in BOTH Zero_Ground.cpp and Zero_Ground_client.cpp**
   - _Requirements: 8.2_
 
 - [ ] 15. Implement network synchronization

@@ -4,9 +4,12 @@
 
 The weapon and shop system extends Zero Ground with comprehensive combat mechanics including weapon purchasing, inventory management, shooting, and damage calculation. The design maintains the existing two-file client-server architecture (Zero_Ground.cpp and Zero_Ground_client.cpp) while adding weapon trading, ballistics, and synchronized combat across the network.
 
+**IMPORTANT: Both Zero_Ground.cpp and Zero_Ground_client.cpp contain identical client-side rendering code.** The host player (running Zero_Ground.cpp) sees the same UI, graphics, and effects as remote players (running Zero_Ground_client.cpp). All client-side features must be implemented in BOTH files to ensure consistent experience.
+
 Key design principles:
 - Server-authoritative combat: All damage calculations and hit detection occur on the server
 - Client-side prediction: Bullet visualization happens immediately on the client for responsiveness
+- Identical client experience: Both host and remote players see the same UI, HUD, bullets, and effects
 - Minimal network overhead: Efficient packet structures for shot synchronization
 - Grid-based optimization: Leverage existing 51×51 grid for shop placement and spatial queries
 - Performance-conscious: Bullet limits and spatial partitioning to maintain 60 FPS
@@ -623,23 +626,37 @@ Performance tests will verify the system maintains 60 FPS:
 
 All code will be added to existing files:
 
-**Zero_Ground.cpp (Server)**:
-- Weapon struct definition
-- Shop struct definition
-- Shop generation algorithm
-- Purchase validation logic
-- Shot validation and hit detection
-- Damage application
-- Respawn logic
+**Zero_Ground.cpp (Server + Host Client)**:
+- **Server-side logic**:
+  - Shop generation algorithm
+  - Purchase validation logic
+  - Shot validation and hit detection
+  - Damage application
+  - Respawn logic
+- **Client-side rendering (for host player)**:
+  - Weapon struct definition
+  - Shop struct definition
+  - Weapon rendering
+  - Shop rendering
+  - Bullet rendering
+  - HUD updates (money, ammo)
+  - Shop UI interface
+  - Input handling (B key, R key, mouse click)
+  - Local bullet prediction
 
-**Zero_Ground_client.cpp (Client)**:
-- Weapon rendering
-- Shop rendering
-- Bullet rendering
-- HUD updates (money, ammo)
-- Shop UI interface
-- Input handling (B key, R key, mouse click)
-- Local bullet prediction
+**Zero_Ground_client.cpp (Remote Client)**:
+- **Client-side rendering (for remote players)**:
+  - Weapon struct definition
+  - Shop struct definition
+  - Weapon rendering
+  - Shop rendering
+  - Bullet rendering
+  - HUD updates (money, ammo)
+  - Shop UI interface
+  - Input handling (B key, R key, mouse click)
+  - Local bullet prediction
+
+**Note**: All client-side rendering code must be identical in both files to ensure consistent experience for all players.
 
 ### Network Protocol Extensions
 
