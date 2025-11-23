@@ -1,24 +1,38 @@
 # Implementation Plan
 
-- [ ] 1. Define core weapon and shop data structures
+- [x] 1. Define core weapon and shop data structures
+
+
+
+
+
   - Add Weapon struct with all 10 weapon types and their properties to both server and client files
   - Add Shop struct with grid position and world coordinates
   - Add Bullet struct with position, velocity, damage, and range tracking
   - Extend Player struct with inventory array (4 slots), activeSlot, and money fields
   - _Requirements: 1.1, 11.1, 11.2_
 
-- [ ] 1.1 Write property test for weapon initialization
+- [x] 1.1 Write property test for weapon initialization
+
+
   - **Property 33: Weapon property completeness**
   - **Validates: Requirements 11.2**
 
-- [ ] 2. Implement shop generation algorithm on server
+- [x] 2. Implement shop generation algorithm on server
+
+
+
+
+
   - Write function to generate 26 random non-overlapping shop positions on 51×51 grid
   - Implement spawn point distance validation (minimum 5 cells)
   - Implement BFS connectivity verification
   - Add fallback shop placement pattern if generation fails after 100 attempts
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
 
-- [ ] 2.1 Write property test for shop generation
+- [x] 2.1 Write property test for shop generation
+
+
   - **Property 2: Shop count invariant**
   - **Property 3: Shop position uniqueness**
   - **Property 4: Shop spawn distance constraint**

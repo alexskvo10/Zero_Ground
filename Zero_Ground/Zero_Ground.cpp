@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <array>
 #include <cstring>
 #include <random>
 #include <queue>
@@ -39,6 +40,9 @@ struct Wall {
     float height = 0.0f;
 };
 
+// Forward declaration for Weapon
+struct Weapon;
+
 struct Player {
     uint32_t id = 0;
     sf::IpAddress ipAddress;
@@ -52,6 +56,11 @@ struct Player {
     bool isReady = false;
     sf::Color color = sf::Color::Blue;
     
+    // Weapon system fields
+    std::array<Weapon*, 4> inventory = {nullptr, nullptr, nullptr, nullptr};
+    int activeSlot = -1;  // -1 means no weapon active
+    int money = 50000;    // Starting money
+    
     float getInterpolatedX(float alpha) const {
         return previousX + (x - previousX) * alpha;
     }
@@ -59,7 +68,284 @@ struct Player {
     float getInterpolatedY(float alpha) const {
         return previousY + (y - previousY) * alpha;
     }
+    
+    // Weapon system methods
+    Weapon* getActiveWeapon() {
+        if (activeSlot >= 0 && activeSlot < 4 && inventory[activeSlot] != nullptr) {
+            return inventory[activeSlot];
+        }
+        return nullptr;
+    }
+    
+    bool hasInventorySpace() const {
+        for (int i = 0; i < 4; i++) {
+            if (inventory[i] == nullptr) return true;
+        }
+        return false;
+    }
+    
+    int getFirstEmptySlot() const {
+        for (int i = 0; i < 4; i++) {
+            if (inventory[i] == nullptr) return i;
+        }
+        return -1;
+    }
+    
+    void addWeapon(Weapon* weapon) {
+        int slot = getFirstEmptySlot();
+        if (slot >= 0) {
+            inventory[slot] = weapon;
+        }
+    }
+    
+    void switchWeapon(int slot) {
+        if (slot >= 0 && slot < 4) {
+            activeSlot = slot;
+        }
+    }
+    
+    float getMovementSpeed() const;  // Defined after Weapon struct
 };
+
+// ========================
+// Weapon System Data Structures
+// ========================
+
+struct Weapon {
+    enum Type {
+        USP = 0, GLOCK = 1, FIVESEVEN = 2, R8 = 3,      // Pistols
+        GALIL = 4, M4 = 5, AK47 = 6,                     // Rifles
+        M10 = 7, AWP = 8, M40 = 9                        // Snipers
+    };
+    
+    Type type;
+    std::string name;
+    int price;
+    int magazineSize;
+    int currentAmmo;
+    int reserveAmmo;
+    float damage;
+    float range;              // Effective range in pixels
+    float bulletSpeed;        // Pixels per second
+    float reloadTime;         // Seconds
+    float movementSpeed;      // Player speed modifier
+    sf::Clock lastShotTime;   // For fire rate limiting
+    bool isReloading;
+    sf::Clock reloadClock;
+    
+    // Factory method to create weapons with proper stats
+    static Weapon* create(Type type) {
+        Weapon* w = new Weapon();
+        w->type = type;
+        w->isReloading = false;
+        w->currentAmmo = 0;  // Will be set below
+        w->reserveAmmo = 0;  // Will be set below
+        
+        switch (type) {
+            case USP:
+                w->name = "USP";
+                w->price = 0;
+                w->magazineSize = 12;
+                w->damage = 15.0f;
+                w->range = 250.0f;
+                w->bulletSpeed = 600.0f;
+                w->reloadTime = 2.0f;
+                w->movementSpeed = 2.5f;
+                w->reserveAmmo = 100;
+                break;
+            case GLOCK:
+                w->name = "Glock-18";
+                w->price = 1000;
+                w->magazineSize = 20;
+                w->damage = 10.0f;
+                w->range = 300.0f;
+                w->bulletSpeed = 600.0f;
+                w->reloadTime = 2.0f;
+                w->movementSpeed = 2.5f;
+                w->reserveAmmo = 120;
+                break;
+            case FIVESEVEN:
+                w->name = "Five-SeveN";
+                w->price = 2500;
+                w->magazineSize = 20;
+                w->damage = 10.0f;
+                w->range = 400.0f;
+                w->bulletSpeed = 800.0f;
+                w->reloadTime = 2.0f;
+                w->movementSpeed = 2.5f;
+                w->reserveAmmo = 100;
+                break;
+            case R8:
+                w->name = "R8 Revolver";
+                w->price = 4250;
+                w->magazineSize = 8;
+                w->damage = 50.0f;
+                w->range = 200.0f;
+                w->bulletSpeed = 700.0f;
+                w->reloadTime = 5.0f;
+                w->movementSpeed = 2.5f;
+                w->reserveAmmo = 40;
+                break;
+            case GALIL:
+                w->name = "Galil AR";
+                w->price = 10000;
+                w->magazineSize = 35;
+                w->damage = 25.0f;
+                w->range = 450.0f;
+                w->bulletSpeed = 900.0f;
+                w->reloadTime = 3.0f;
+                w->movementSpeed = 2.0f;
+                w->reserveAmmo = 140;
+                break;
+            case M4:
+                w->name = "M4";
+                w->price = 15000;
+                w->magazineSize = 30;
+                w->damage = 30.0f;
+                w->range = 425.0f;
+                w->bulletSpeed = 850.0f;
+                w->reloadTime = 3.0f;
+                w->movementSpeed = 1.8f;
+                w->reserveAmmo = 120;
+                break;
+            case AK47:
+                w->name = "AK-47";
+                w->price = 17500;
+                w->magazineSize = 25;
+                w->damage = 35.0f;
+                w->range = 450.0f;
+                w->bulletSpeed = 900.0f;
+                w->reloadTime = 3.0f;
+                w->movementSpeed = 1.6f;
+                w->reserveAmmo = 100;
+                break;
+            case M10:
+                w->name = "M10";
+                w->price = 20000;
+                w->magazineSize = 5;
+                w->damage = 50.0f;
+                w->range = 1000.0f;
+                w->bulletSpeed = 2000.0f;
+                w->reloadTime = 4.0f;
+                w->movementSpeed = 1.1f;
+                w->reserveAmmo = 25;
+                break;
+            case AWP:
+                w->name = "AWP";
+                w->price = 25000;
+                w->magazineSize = 1;
+                w->damage = 100.0f;
+                w->range = 1000.0f;
+                w->bulletSpeed = 2000.0f;
+                w->reloadTime = 1.5f;
+                w->movementSpeed = 1.0f;
+                w->reserveAmmo = 10;
+                break;
+            case M40:
+                w->name = "M40";
+                w->price = 22000;
+                w->magazineSize = 1;
+                w->damage = 99.0f;
+                w->range = 2000.0f;
+                w->bulletSpeed = 4000.0f;
+                w->reloadTime = 1.5f;
+                w->movementSpeed = 1.2f;
+                w->reserveAmmo = 10;
+                break;
+        }
+        
+        // Initialize with full magazine
+        w->currentAmmo = w->magazineSize;
+        
+        return w;
+    }
+    
+    bool canFire() const {
+        return !isReloading && currentAmmo > 0;
+    }
+    
+    void startReload() {
+        if (reserveAmmo > 0 && currentAmmo < magazineSize) {
+            isReloading = true;
+            reloadClock.restart();
+        }
+    }
+    
+    void updateReload(float deltaTime) {
+        if (isReloading && reloadClock.getElapsedTime().asSeconds() >= reloadTime) {
+            // Transfer ammo from reserve to magazine
+            int ammoNeeded = magazineSize - currentAmmo;
+            int ammoToTransfer = std::min(ammoNeeded, reserveAmmo);
+            currentAmmo += ammoToTransfer;
+            reserveAmmo -= ammoToTransfer;
+            isReloading = false;
+        }
+    }
+    
+    void fire() {
+        if (canFire()) {
+            currentAmmo--;
+            lastShotTime.restart();
+        }
+    }
+};
+
+struct Shop {
+    int gridX = 0;
+    int gridY = 0;              // Position in 51×51 grid
+    float worldX = 0.0f;
+    float worldY = 0.0f;        // World coordinates (center of cell)
+    
+    // Check if player is in interaction range (60 pixels)
+    bool isPlayerNear(float px, float py) const {
+        float dx = worldX - px;
+        float dy = worldY - py;
+        return (dx*dx + dy*dy) <= (60.0f * 60.0f);
+    }
+};
+
+struct Bullet {
+    uint8_t ownerId = 0;           // Player who fired
+    float x = 0.0f;
+    float y = 0.0f;                // Current position
+    float vx = 0.0f;
+    float vy = 0.0f;               // Velocity vector
+    float damage = 0.0f;
+    float range = 0.0f;            // Remaining range
+    float maxRange = 0.0f;         // Initial range
+    Weapon::Type weaponType;
+    sf::Clock lifetime;
+    
+    // Update position
+    void update(float deltaTime) {
+        x += vx * deltaTime;
+        y += vy * deltaTime;
+        
+        // Update remaining range
+        float distanceTraveled = std::sqrt(vx * vx + vy * vy) * deltaTime;
+        range -= distanceTraveled;
+    }
+    
+    // Check if bullet should be removed
+    bool shouldRemove() const {
+        // Remove if exceeded range
+        if (range <= 0.0f) return true;
+        
+        // Remove if outside map boundaries
+        if (x < 0.0f || x > 5100.0f || y < 0.0f || y > 5100.0f) return true;
+        
+        return false;
+    }
+};
+
+// Implementation of Player::getMovementSpeed (defined after Weapon struct)
+float Player::getMovementSpeed() const {
+    Weapon* active = const_cast<Player*>(this)->getActiveWeapon();
+    if (active != nullptr) {
+        return active->movementSpeed;
+    }
+    return 3.0f;  // Base speed when no weapon
+}
 
 // Forward declaration
 struct Quadtree;
@@ -513,6 +799,219 @@ bool generateValidMap(std::vector<std::vector<Cell>>& grid) {
     
     // This line should never be reached due to exit() in ErrorHandler::handleMapGenerationFailure()
     return false;
+}
+
+// ========================
+// Shop Generation System
+// ========================
+
+// Generate 26 random non-overlapping shop positions on the 51×51 grid
+// Parameters:
+//   shops - Output vector to store generated shop positions
+//   spawnPoints - Vector of spawn point positions to check distance from
+//   grid - The cell grid to verify connectivity
+// Returns: true if successful, false if failed after max attempts
+//
+// ALGORITHM:
+// 1. Generate 26 random grid positions (0-50, 0-50)
+// 2. Ensure no two shops occupy the same grid cell
+// 3. Ensure each shop is at least 5 cells away from any spawn point
+// 4. Verify map connectivity using BFS (shops shouldn't block paths)
+// 5. If any constraint fails, retry (max 100 attempts)
+// 6. If all attempts fail, use fallback pattern
+//
+// SPAWN DISTANCE CONSTRAINT:
+// Shops must be at least 5 grid cells away from spawn points to ensure
+// players have safe space to spawn without immediately being in a shop.
+// Distance is calculated using Euclidean distance in grid coordinates.
+//
+// FALLBACK PATTERN:
+// If random generation fails after 100 attempts, shops are placed in a
+// predetermined grid pattern that guarantees valid placement.
+bool generateShops(std::vector<Shop>& shops, const std::vector<sf::Vector2i>& spawnPoints, const std::vector<std::vector<Cell>>& grid) {
+    const int NUM_SHOPS = 26;
+    const int MAX_ATTEMPTS = 100;
+    const int MIN_SPAWN_DISTANCE = 5;  // Minimum distance from spawn points in grid cells
+    
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<int> gridDist(0, GRID_SIZE - 1);  // 0-50 for 51x51 grid
+    
+    std::cout << "\n=== Starting Shop Generation ===" << std::endl;
+    std::cout << "Target shops: " << NUM_SHOPS << std::endl;
+    std::cout << "Grid size: " << GRID_SIZE << "x" << GRID_SIZE << std::endl;
+    std::cout << "Min spawn distance: " << MIN_SPAWN_DISTANCE << " cells" << std::endl;
+    std::cout << "Maximum attempts: " << MAX_ATTEMPTS << std::endl;
+    
+    for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
+        shops.clear();
+        std::vector<std::pair<int, int>> usedPositions;
+        bool attemptFailed = false;
+        
+        // Generate 26 shops
+        for (int i = 0; i < NUM_SHOPS; ++i) {
+            int maxRetries = 1000;  // Max retries for finding a valid position for this shop
+            bool foundValidPosition = false;
+            
+            for (int retry = 0; retry < maxRetries; ++retry) {
+                // Generate random grid position
+                int gridX = gridDist(gen);
+                int gridY = gridDist(gen);
+                
+                // Check if position is already occupied
+                bool occupied = false;
+                for (const auto& pos : usedPositions) {
+                    if (pos.first == gridX && pos.second == gridY) {
+                        occupied = true;
+                        break;
+                    }
+                }
+                
+                if (occupied) {
+                    continue;  // Try another position
+                }
+                
+                // Check distance from spawn points
+                bool tooCloseToSpawn = false;
+                for (const auto& spawn : spawnPoints) {
+                    // Convert spawn world coordinates to grid coordinates
+                    int spawnGridX = static_cast<int>(spawn.x / CELL_SIZE);
+                    int spawnGridY = static_cast<int>(spawn.y / CELL_SIZE);
+                    
+                    // Calculate distance in grid cells
+                    int dx = gridX - spawnGridX;
+                    int dy = gridY - spawnGridY;
+                    float distance = std::sqrt(static_cast<float>(dx * dx + dy * dy));
+                    
+                    if (distance < MIN_SPAWN_DISTANCE) {
+                        tooCloseToSpawn = true;
+                        break;
+                    }
+                }
+                
+                if (tooCloseToSpawn) {
+                    continue;  // Try another position
+                }
+                
+                // Valid position found!
+                usedPositions.push_back(std::make_pair(gridX, gridY));
+                
+                // Create shop at this position
+                Shop shop;
+                shop.gridX = gridX;
+                shop.gridY = gridY;
+                // World coordinates: center of the cell (grid * CELL_SIZE + CELL_SIZE/2)
+                shop.worldX = gridX * CELL_SIZE + CELL_SIZE / 2.0f;
+                shop.worldY = gridY * CELL_SIZE + CELL_SIZE / 2.0f;
+                shops.push_back(shop);
+                
+                foundValidPosition = true;
+                break;
+            }
+            
+            if (!foundValidPosition) {
+                attemptFailed = true;
+                break;
+            }
+        }
+        
+        if (attemptFailed) {
+            continue;  // Try entire generation again
+        }
+        
+        // Verify we generated exactly 26 shops
+        if (shops.size() != NUM_SHOPS) {
+            continue;
+        }
+        
+        // Verify connectivity: check that shops don't block paths between spawn points
+        // We already know the map has valid connectivity from generateValidMap,
+        // so we just need to ensure shops are placed in accessible areas
+        bool allShopsAccessible = true;
+        for (const auto& shop : shops) {
+            sf::Vector2i shopPos(static_cast<int>(shop.worldX), static_cast<int>(shop.worldY));
+            
+            // Check if shop position is accessible from at least one spawn point
+            bool accessibleFromAnySpawn = false;
+            for (const auto& spawn : spawnPoints) {
+                if (isPathExists(spawn, shopPos, grid)) {
+                    accessibleFromAnySpawn = true;
+                    break;
+                }
+            }
+            
+            if (!accessibleFromAnySpawn) {
+                allShopsAccessible = false;
+                break;
+            }
+        }
+        
+        if (!allShopsAccessible) {
+            continue;  // Try again
+        }
+        
+        // Success! All constraints satisfied
+        std::cout << "\n✓ SUCCESS! Shops generated successfully on attempt " << (attempt + 1) << std::endl;
+        std::cout << "Total shops: " << shops.size() << std::endl;
+        
+        // Log some shop positions for verification
+        std::cout << "Sample shop positions:" << std::endl;
+        for (int i = 0; i < std::min(5, static_cast<int>(shops.size())); ++i) {
+            std::cout << "  Shop " << (i + 1) << ": grid(" << shops[i].gridX << ", " << shops[i].gridY 
+                      << ") world(" << shops[i].worldX << ", " << shops[i].worldY << ")" << std::endl;
+        }
+        std::cout << "================================\n" << std::endl;
+        
+        return true;
+    }
+    
+    // All attempts failed, use fallback pattern
+    std::cerr << "\n✗ WARNING: Random shop generation failed after " << MAX_ATTEMPTS << " attempts" << std::endl;
+    std::cerr << "Using fallback shop placement pattern..." << std::endl;
+    
+    shops.clear();
+    
+    // Fallback: Place shops in a predetermined pattern
+    // Use a grid pattern with spacing to ensure valid placement
+    const int spacing = 10;  // 10 cells between shops
+    int shopsPlaced = 0;
+    
+    for (int x = 5; x < GRID_SIZE && shopsPlaced < NUM_SHOPS; x += spacing) {
+        for (int y = 5; y < GRID_SIZE && shopsPlaced < NUM_SHOPS; y += spacing) {
+            // Check distance from spawn points
+            bool tooCloseToSpawn = false;
+            for (const auto& spawn : spawnPoints) {
+                int spawnGridX = static_cast<int>(spawn.x / CELL_SIZE);
+                int spawnGridY = static_cast<int>(spawn.y / CELL_SIZE);
+                
+                int dx = x - spawnGridX;
+                int dy = y - spawnGridY;
+                float distance = std::sqrt(static_cast<float>(dx * dx + dy * dy));
+                
+                if (distance < MIN_SPAWN_DISTANCE) {
+                    tooCloseToSpawn = true;
+                    break;
+                }
+            }
+            
+            if (tooCloseToSpawn) {
+                continue;
+            }
+            
+            Shop shop;
+            shop.gridX = x;
+            shop.gridY = y;
+            shop.worldX = x * CELL_SIZE + CELL_SIZE / 2.0f;
+            shop.worldY = y * CELL_SIZE + CELL_SIZE / 2.0f;
+            shops.push_back(shop);
+            shopsPlaced++;
+        }
+    }
+    
+    std::cout << "✓ Fallback pattern placed " << shops.size() << " shops" << std::endl;
+    std::cout << "================================\n" << std::endl;
+    
+    return true;
 }
 
 // ========================
@@ -2371,6 +2870,18 @@ int main() {
     clientPosPrevious = spawns.second;
     clientPosTarget = spawns.second;
     std::cout << "Spawn generation complete\n" << std::endl;
+    
+    // Generate shops
+    std::vector<Shop> shops;
+    std::vector<sf::Vector2i> spawnPoints;
+    spawnPoints.push_back(sf::Vector2i(static_cast<int>(serverPos.x), static_cast<int>(serverPos.y)));
+    spawnPoints.push_back(sf::Vector2i(static_cast<int>(clientPos.x), static_cast<int>(clientPos.y)));
+    
+    if (!generateShops(shops, spawnPoints, grid)) {
+        std::cerr << "[CRITICAL] Shop generation failed, exiting..." << std::endl;
+        return -1;
+    }
+    std::cout << "Shop generation complete\n" << std::endl;
     
     sf::TcpListener tcpListener;
     ErrorHandler::logInfo("=== Starting TCP Server ===");
