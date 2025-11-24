@@ -372,6 +372,52 @@ struct Bullet {
         
         return false;
     }
+    
+    // Requirement 7.3: Check collision with wall
+    bool checkWallCollision(const Wall& wall) const {
+        // Simple point-in-rectangle collision
+        return (x >= wall.x && x <= wall.x + wall.width &&
+                y >= wall.y && y <= wall.y + wall.height);
+    }
+    
+    // Requirement 7.4: Check collision with player (circle collision)
+    bool checkPlayerCollision(float playerX, float playerY, float playerRadius) const {
+        float dx = x - playerX;
+        float dy = y - playerY;
+        float distanceSquared = dx * dx + dy * dy;
+        return distanceSquared <= (playerRadius * playerRadius);
+    }
+};
+
+// Requirement 8.2: Damage text visualization
+struct DamageText {
+    float x = 0.0f;
+    float y = 0.0f;
+    float damage = 0.0f;
+    sf::Clock lifetime;
+    
+    // Check if damage text should be removed (after 1 second)
+    bool shouldRemove() const {
+        return lifetime.getElapsedTime().asSeconds() >= 1.0f;
+    }
+    
+    // Get current Y position with upward animation
+    float getAnimatedY() const {
+        float elapsed = lifetime.getElapsedTime().asSeconds();
+        // Move upward 50 pixels over 1 second
+        return y - (elapsed * 50.0f);
+    }
+    
+    // Get alpha for fade-out effect
+    sf::Uint8 getAlpha() const {
+        float elapsed = lifetime.getElapsedTime().asSeconds();
+        // Fade out in last 0.3 seconds
+        if (elapsed > 0.7f) {
+            float fadeProgress = (elapsed - 0.7f) / 0.3f;
+            return static_cast<sf::Uint8>(255 * (1.0f - fadeProgress));
+        }
+        return 255;
+    }
 };
 
 // Forward declaration
@@ -1229,6 +1275,35 @@ struct InventoryPacket {
     int newMoneyBalance;
 };
 
+// Requirement 7.6: Shot packet (client → server → all clients)
+// Sent when player fires weapon
+struct ShotPacket {
+    uint8_t playerId;
+    float x, y;          // Shot origin position
+    float dirX, dirY;    // Normalized direction vector
+    uint8_t weaponType;  // Weapon::Type enum value
+    float bulletSpeed;   // Bullet speed for this weapon
+    float damage;        // Damage for this weapon
+    float range;         // Range for this weapon
+};
+
+// Requirement 10.4: Hit packet (server → all clients)
+// Sent when bullet hits a player
+struct HitPacket {
+    uint8_t shooterId;   // Player who fired the bullet
+    uint8_t victimId;    // Player who was hit
+    float damage;        // Damage dealt
+    float hitX, hitY;    // Position where hit occurred
+    bool wasKill;        // True if this hit killed the victim
+};
+
+// Shop positions packet (server → clients)
+// Sent after map generation to synchronize shop locations
+struct ShopPositionsPacket {
+    uint8_t shopCount;
+    // Followed by shopCount * (gridX, gridY) pairs
+};
+
 // ========================
 // Packet Validation Functions
 // ========================
@@ -1872,15 +1947,15 @@ PurchaseStatus calculatePurchaseStatus(const Player& player, const Weapon* weapo
     return PurchaseStatus::Purchasable;
 }
 
-// Get purchase status text in Russian
+// Get purchase status text
 std::string getPurchaseStatusText(PurchaseStatus status, int weaponPrice) {
     switch (status) {
         case PurchaseStatus::Purchasable:
-            return "Можно купить";  // "Can purchase"
+            return "Can purchase";
         case PurchaseStatus::InsufficientFunds:
-            return "Недостаточно денег. Требуется: " + std::to_string(weaponPrice);  // "Insufficient funds. Required: [amount]"
+            return "Insufficient funds. Required: $" + std::to_string(weaponPrice);
         case PurchaseStatus::InventoryFull:
-            return "Инвентарь заполнен. Освободите ячейку для покупки.";  // "Inventory full. Free a slot to purchase."
+            return "Inventory full. Free a slot to purchase.";
         default:
             return "";
     }
@@ -1995,7 +2070,7 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
     // Draw title
     sf::Text titleText;
     titleText.setFont(font);
-    titleText.setString("МАГАЗИН ОРУЖИЯ");  // "WEAPON SHOP"
+    titleText.setString("WEAPON SHOP");
     titleText.setCharacterSize(static_cast<unsigned int>(40 * scale));
     titleText.setFillColor(sf::Color(255, 255, 255, static_cast<sf::Uint8>(easedProgress * 255)));
     sf::FloatRect titleBounds = titleText.getLocalBounds();
@@ -2008,7 +2083,7 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
     // Draw player money
     sf::Text moneyText;
     moneyText.setFont(font);
-    moneyText.setString("Деньги: $" + std::to_string(player.money));  // "Money: $"
+    moneyText.setString("Money: $" + std::to_string(player.money));
     moneyText.setCharacterSize(static_cast<unsigned int>(28 * scale));
     moneyText.setFillColor(sf::Color(100, 255, 100, static_cast<sf::Uint8>(easedProgress * 255)));
     moneyText.setPosition(scaledX + 20.0f * scale, scaledY + 70.0f * scale);
@@ -2028,9 +2103,9 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
     };
     
     std::vector<WeaponCategory> categories = {
-        {"Пистолеты", {Weapon::USP, Weapon::GLOCK, Weapon::FIVESEVEN, Weapon::R8}},  // "Pistols"
-        {"Автоматы", {Weapon::GALIL, Weapon::M4, Weapon::AK47}},  // "Rifles"
-        {"Снайперки", {Weapon::M10, Weapon::AWP, Weapon::M40}}  // "Snipers"
+        {"Pistols", {Weapon::USP, Weapon::GLOCK, Weapon::FIVESEVEN, Weapon::R8}},
+        {"Rifles", {Weapon::GALIL, Weapon::M4, Weapon::AK47}},
+        {"Snipers", {Weapon::M10, Weapon::AWP, Weapon::M40}}
     };
     
     // Draw each column
@@ -2111,8 +2186,8 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
             sf::Text weaponStats;
             weaponStats.setFont(font);
             std::ostringstream statsStream;
-            statsStream << "Урон: " << static_cast<int>(weapon->damage) << "\n";  // "Damage: "
-            statsStream << "Магазин: " << weapon->magazineSize;  // "Magazine: "
+            statsStream << "Damage: " << static_cast<int>(weapon->damage) << "\n";
+            statsStream << "Magazine: " << weapon->magazineSize;
             weaponStats.setString(statsStream.str());
             weaponStats.setCharacterSize(static_cast<unsigned int>(16 * scale));
             weaponStats.setFillColor(sf::Color(200, 200, 200, static_cast<sf::Uint8>(easedProgress * 255)));
@@ -2139,7 +2214,7 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
     // Draw close instruction
     sf::Text closeText;
     closeText.setFont(font);
-    closeText.setString("Нажмите B чтобы закрыть");  // "Press B to close"
+    closeText.setString("Press B to close");
     closeText.setCharacterSize(static_cast<unsigned int>(22 * scale));
     closeText.setFillColor(sf::Color(200, 200, 200, static_cast<sf::Uint8>(easedProgress * 255)));
     sf::FloatRect closeBounds = closeText.getLocalBounds();
@@ -2173,7 +2248,7 @@ void renderShopInteractionPrompt(sf::RenderWindow& window, sf::Vector2f playerPo
         // Create prompt text
         sf::Text promptText;
         promptText.setFont(font);
-        promptText.setString("Нажмите B для покупки");  // "Press B to purchase"
+        promptText.setString("Press B to purchase");
         promptText.setCharacterSize(28);
         promptText.setFillColor(sf::Color::White);
         promptText.setOutlineColor(sf::Color::Black);
@@ -2766,6 +2841,58 @@ public:
         return players_.size();
     }
     
+    // Requirement 8.1: Thread-safe apply damage to player
+    void applyDamage(uint32_t playerId, float damage) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (players_.count(playerId)) {
+            players_[playerId].health -= damage;
+            if (players_[playerId].health < 0.0f) {
+                players_[playerId].health = 0.0f;
+            }
+        }
+    }
+    
+    // Requirement 8.3: Thread-safe check if player is dead
+    bool isPlayerDead(uint32_t playerId) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (players_.count(playerId)) {
+            return players_.at(playerId).health <= 0.0f;
+        }
+        return false;
+    }
+    
+    // Requirement 8.4: Thread-safe award money to player
+    void awardMoney(uint32_t playerId, int amount) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (players_.count(playerId)) {
+            players_[playerId].money += amount;
+            ErrorHandler::logInfo("Player " + std::to_string(playerId) + 
+                                 " awarded $" + std::to_string(amount) + 
+                                 ". New balance: $" + std::to_string(players_[playerId].money));
+        }
+    }
+    
+    // Requirement 8.5: Thread-safe respawn player
+    void respawnPlayer(uint32_t playerId, float x, float y) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (players_.count(playerId)) {
+            players_[playerId].health = 100.0f;
+            players_[playerId].isAlive = true;
+            players_[playerId].x = x;
+            players_[playerId].y = y;
+            players_[playerId].previousX = x;
+            players_[playerId].previousY = y;
+        }
+    }
+    
+    // Thread-safe set player alive status
+    void setPlayerAlive(uint32_t playerId, bool alive) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (players_.count(playerId)) {
+            players_[playerId].isAlive = alive;
+        }
+    }
+    
 private:
     mutable std::mutex mutex_;
     std::map<uint32_t, Player> players_;
@@ -2871,12 +2998,28 @@ Position serverPosPrevious = { 250.0f, 4850.0f }; // Previous position for inter
 float serverHealth = 100.0f; // Server player health (0-100)
 int serverScore = 0; // Server player score
 bool serverIsAlive = true; // Server player alive status
+sf::Clock serverRespawnTimer; // Requirement 8.4: Timer for respawn
+bool serverWaitingRespawn = false; // Requirement 8.3: Waiting for respawn flag
 std::map<sf::IpAddress, Position> clients;
 Position clientPos = { 4850.0f, 250.0f }; // Client position (will be randomized)
 Position clientPosPrevious = { 4850.0f, 250.0f }; // Previous client position
 Position clientPosTarget = { 4850.0f, 250.0f }; // Target client position (latest received)
 GameMap gameMap;
 GameState gameState; // Thread-safe game state manager
+
+// Server player with inventory and weapons
+Player serverPlayer;
+
+// Shop system
+std::vector<Shop> shops;
+
+// Requirement 7.1: Store active bullets
+std::vector<Bullet> activeBullets;
+std::mutex bulletsMutex;
+
+// Requirement 8.2: Store active damage texts
+std::vector<DamageText> damageTexts;
+std::mutex damageTextsMutex;
 
 // Client connection state
 struct ClientConnection {
@@ -3301,7 +3444,6 @@ int main() {
     std::cout << "Spawn generation complete\n" << std::endl;
     
     // Generate shops
-    std::vector<Shop> shops;
     std::vector<sf::Vector2i> spawnPoints;
     spawnPoints.push_back(sf::Vector2i(static_cast<int>(serverPos.x), static_cast<int>(serverPos.y)));
     spawnPoints.push_back(sf::Vector2i(static_cast<int>(clientPos.x), static_cast<int>(clientPos.y)));
@@ -3310,11 +3452,10 @@ int main() {
         std::cerr << "[CRITICAL] Shop generation failed, exiting..." << std::endl;
         return -1;
     }
-    std::cout << "Shop generation complete\n" << std::endl;
+    std::cout << "Shop generation complete - Generated " << shops.size() << " shops\n" << std::endl;
     
     // Initialize server player with starting equipment
     // Requirements: 1.1, 1.2, 1.3
-    Player serverPlayer;
     initializePlayer(serverPlayer);
     serverPlayer.x = serverPos.x;
     serverPlayer.y = serverPos.y;
@@ -3453,11 +3594,11 @@ int main() {
     auto centerElements = [&]() {
         sf::Vector2u winSize = window.getSize();
 
-        // Center "СЕРВЕР ЗАПУЩЕН" text
+        // Center "SERVER RUNNING" text
         startText.setPosition(static_cast<float>(winSize.x) / 2.0f - startText.getLocalBounds().width / 2.0f,
             static_cast<float>(winSize.y) / 2.0f - 150.0f);
 
-        // Center "IP сервера:" text
+        // Center "Server IP:" text
         ipText.setPosition(static_cast<float>(winSize.x) / 2.0f - ipText.getLocalBounds().width / 2.0f,
             static_cast<float>(winSize.y) / 2.0f - 50.0f);
 
@@ -3492,7 +3633,7 @@ int main() {
             
             // Toggle inventory with E key (works in both English and Russian layouts)
             if (event.type == sf::Event::KeyPressed && serverState.load() == ServerState::MainScreen) {
-                // E key on English layout or У key on Russian layout (same physical key)
+                // E key for inventory
                 if (event.key.code == sf::Keyboard::E) {
                     inventoryOpen = !inventoryOpen;
                     inventoryAnimationClock.restart(); // Start animation
@@ -3556,6 +3697,9 @@ int main() {
             // Requirement 6.1: Handle left mouse button click to fire weapon
             if (event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Left) {
                 Weapon* activeWeapon = serverPlayer.getActiveWeapon();
+                if (activeWeapon == nullptr) {
+                    ErrorHandler::logInfo("Cannot fire: No active weapon. Active slot: " + std::to_string(serverPlayer.activeSlot));
+                }
                 if (activeWeapon != nullptr && !shopUIOpen && !inventoryOpen) {
                     // Check if weapon can fire
                     if (activeWeapon->canFire()) {
@@ -3588,8 +3732,27 @@ int main() {
                             // Fire weapon (consumes ammo)
                             activeWeapon->fire();
                             
-                            // TODO: Add bullet to active bullets list
-                            // TODO: Send shot packet to server/clients
+                            // Requirement 7.1: Add bullet to active bullets list
+                            // Requirement 10.3: Ensure maximum 20 active bullets per player
+                            {
+                                std::lock_guard<std::mutex> lock(bulletsMutex);
+                                
+                                // Count bullets owned by this player
+                                int playerBulletCount = 0;
+                                for (const auto& b : activeBullets) {
+                                    if (b.ownerId == 0) playerBulletCount++;
+                                }
+                                
+                                // Only add if under limit
+                                if (playerBulletCount < 20) {
+                                    activeBullets.push_back(bullet);
+                                    ErrorHandler::logInfo("Bullet created! Total bullets: " + std::to_string(activeBullets.size()));
+                                } else {
+                                    ErrorHandler::logInfo("Bullet limit reached (20)");
+                                }
+                            }
+                            
+                            // TODO: Send shot packet to clients
                             
                             ErrorHandler::logInfo("Fired " + activeWeapon->name + " - Ammo: " + 
                                                  std::to_string(activeWeapon->currentAmmo) + "/" + 
@@ -3700,6 +3863,215 @@ int main() {
             Weapon* activeWeapon = serverPlayer.getActiveWeapon();
             if (activeWeapon != nullptr) {
                 activeWeapon->updateReload(deltaTime);
+            }
+            
+            // Requirement 7.2: Update bullet positions
+            // Requirement 7.3, 7.4: Check bullet collisions
+            // Requirement 7.5, 10.1, 10.2, 10.3: Remove bullets based on conditions
+            {
+                std::lock_guard<std::mutex> lock(bulletsMutex);
+                
+                // Update all bullets
+                for (auto& bullet : activeBullets) {
+                    bullet.update(deltaTime);
+                }
+                
+                // Requirement 7.3: Check bullet-wall collisions using quadtree
+                if (gameMap.spatialIndex != nullptr) {
+                    for (auto& bullet : activeBullets) {
+                        // Query quadtree for walls near bullet (100x100 area around bullet)
+                        sf::FloatRect queryArea(bullet.x - 50.0f, bullet.y - 50.0f, 100.0f, 100.0f);
+                        std::vector<Wall*> nearbyWalls = gameMap.spatialIndex->query(queryArea);
+                        
+                        // Check collision with each nearby wall
+                        for (Wall* wall : nearbyWalls) {
+                            if (bullet.checkWallCollision(*wall)) {
+                                // Mark bullet for removal by setting range to 0
+                                bullet.range = 0.0f;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // Requirement 7.4: Check bullet-player collisions
+                const float PLAYER_RADIUS = 20.0f; // PLAYER_SIZE / 2
+                
+                // Check collision with server player
+                for (auto& bullet : activeBullets) {
+                    // Don't check collision with own bullets and skip if already dead
+                    if (bullet.ownerId != 0 && serverIsAlive) {
+                        if (bullet.checkPlayerCollision(serverPos.x, serverPos.y, PLAYER_RADIUS)) {
+                            // Requirement 8.1: Apply damage to server player
+                            serverHealth -= bullet.damage;
+                            if (serverHealth < 0.0f) serverHealth = 0.0f;
+                            
+                            // Mark bullet for removal
+                            bullet.range = 0.0f;
+                            
+                            ErrorHandler::logInfo("Server player hit! Damage: " + std::to_string(bullet.damage) + 
+                                                 ", Health: " + std::to_string(serverHealth));
+                            
+                            // Requirement 8.2: Create damage text visualization
+                            {
+                                std::lock_guard<std::mutex> lock(damageTextsMutex);
+                                DamageText damageText;
+                                damageText.x = serverPos.x;
+                                damageText.y = serverPos.y - 30.0f; // Start above player
+                                damageText.damage = bullet.damage;
+                                damageTexts.push_back(damageText);
+                            }
+                            
+                            // Requirement 8.3: Check for player death
+                            if (serverHealth <= 0.0f) {
+                                serverIsAlive = false;
+                                serverWaitingRespawn = true;
+                                serverRespawnTimer.restart();
+                                
+                                // Requirement 8.4: Award $5000 to eliminating player
+                                uint8_t killerId = bullet.ownerId;
+                                
+                                // Award money to killer (if it's a player in GameState)
+                                if (gameState.hasPlayer(killerId)) {
+                                    gameState.awardMoney(killerId, 5000);
+                                }
+                                
+                                ErrorHandler::logInfo("Server player eliminated by player " + 
+                                                     std::to_string(killerId) + "! Respawn in 5 seconds...");
+                                
+                                // TODO: Requirement 9.5: Broadcast death event to all clients
+                            }
+                            
+                            // TODO: Requirement 10.4: Send hit packet to all clients
+                        }
+                    }
+                }
+                
+                // Requirement 7.4: Check collision with all other players from GameState
+                std::vector<Player> allPlayers = gameState.getPlayersInRadius(
+                    sf::Vector2f(serverPos.x, serverPos.y), 10000.0f); // Large radius to get all players
+                
+                for (auto& bullet : activeBullets) {
+                    if (bullet.range <= 0.0f) continue; // Skip already hit bullets
+                    
+                    // Check collision with each player
+                    for (const auto& player : allPlayers) {
+                        // Don't check collision with bullet owner or dead players
+                        if (bullet.ownerId == player.id || !player.isAlive) continue;
+                        
+                        if (bullet.checkPlayerCollision(player.x, player.y, PLAYER_RADIUS)) {
+                            // Requirement 8.1: Apply damage to player
+                            gameState.applyDamage(player.id, bullet.damage);
+                            
+                            // Mark bullet for removal
+                            bullet.range = 0.0f;
+                            
+                            ErrorHandler::logInfo("Player " + std::to_string(player.id) + 
+                                                " hit! Damage: " + std::to_string(bullet.damage));
+                            
+                            // Requirement 8.2: Create damage text visualization
+                            {
+                                std::lock_guard<std::mutex> lock(damageTextsMutex);
+                                DamageText damageText;
+                                damageText.x = player.x;
+                                damageText.y = player.y - 30.0f; // Start above player
+                                damageText.damage = bullet.damage;
+                                damageTexts.push_back(damageText);
+                            }
+                            
+                            // Requirement 8.3: Check for player death
+                            if (gameState.isPlayerDead(player.id)) {
+                                gameState.setPlayerAlive(player.id, false);
+                                
+                                // Requirement 8.4: Award $5000 to eliminating player
+                                if (gameState.hasPlayer(bullet.ownerId)) {
+                                    gameState.awardMoney(bullet.ownerId, 5000);
+                                }
+                                
+                                ErrorHandler::logInfo("Player " + std::to_string(player.id) + 
+                                                     " eliminated by player " + std::to_string(bullet.ownerId) + "!");
+                                
+                                // TODO: Requirement 8.4: Schedule respawn after 5 seconds
+                                // TODO: Requirement 9.5: Broadcast death event to all clients
+                            }
+                            
+                            // TODO: Requirement 10.4: Send hit packet to all clients
+                            break; // Bullet can only hit one player
+                        }
+                    }
+                }
+                
+                // Also check collision with simple client position (for basic 2-player mode)
+                for (auto& bullet : activeBullets) {
+                    if (bullet.range <= 0.0f) continue; // Skip already hit bullets
+                    
+                    // Don't check collision with own bullets
+                    if (bullet.ownerId == 0) {
+                        if (bullet.checkPlayerCollision(clientPos.x, clientPos.y, PLAYER_RADIUS)) {
+                            // Mark bullet for removal
+                            bullet.range = 0.0f;
+                            
+                            // TODO: Requirement 10.4: Send hit packet to all clients
+                            ErrorHandler::logInfo("Client player hit! Damage: " + std::to_string(bullet.damage));
+                        }
+                    }
+                }
+                
+                // Get screen bounds with 20% buffer for culling
+                sf::Vector2f viewCenter = window.getView().getCenter();
+                sf::Vector2f viewSize = window.getView().getSize();
+                float bufferMultiplier = 1.2f;
+                float screenLeft = viewCenter.x - (viewSize.x * bufferMultiplier) / 2.0f;
+                float screenRight = viewCenter.x + (viewSize.x * bufferMultiplier) / 2.0f;
+                float screenTop = viewCenter.y - (viewSize.y * bufferMultiplier) / 2.0f;
+                float screenBottom = viewCenter.y + (viewSize.y * bufferMultiplier) / 2.0f;
+                
+                // Remove bullets that should be removed
+                activeBullets.erase(
+                    std::remove_if(activeBullets.begin(), activeBullets.end(),
+                        [screenLeft, screenRight, screenTop, screenBottom](const Bullet& b) {
+                            // Requirement 7.5: Remove if exceeded range
+                            if (b.shouldRemove()) return true;
+                            
+                            // Requirement 10.2: Remove if outside screen + 20% buffer
+                            if (b.x < screenLeft || b.x > screenRight || 
+                                b.y < screenTop || b.y > screenBottom) {
+                                return true;
+                            }
+                            
+                            return false;
+                        }),
+                    activeBullets.end()
+                );
+            }
+            
+            // Requirement 8.2: Update and remove expired damage texts
+            {
+                std::lock_guard<std::mutex> lock(damageTextsMutex);
+                damageTexts.erase(
+                    std::remove_if(damageTexts.begin(), damageTexts.end(),
+                        [](const DamageText& dt) {
+                            return dt.shouldRemove();
+                        }),
+                    damageTexts.end()
+                );
+            }
+            
+            // Requirement 8.4, 8.5: Handle respawn after 5 seconds
+            if (serverWaitingRespawn && serverRespawnTimer.getElapsedTime().asSeconds() >= 5.0f) {
+                // Requirement 8.5: Restore health to 100 HP on respawn
+                serverHealth = 100.0f;
+                serverIsAlive = true;
+                serverWaitingRespawn = false;
+                
+                // Respawn at original spawn position
+                serverPos.x = 250.0f;
+                serverPos.y = 4850.0f;
+                serverPosPrevious = serverPos;
+                
+                ErrorHandler::logInfo("Server player respawned! Health: 100 HP");
+                
+                // TODO: Requirement 9.5: Broadcast respawn event to all clients
             }
             
             // Update performance monitoring
@@ -3824,6 +4196,79 @@ int main() {
                 }
             }
             
+            // Requirement 7.1: Render bullets as white lines (5px length, 2px width)
+            {
+                std::lock_guard<std::mutex> lock(bulletsMutex);
+                
+                for (const auto& bullet : activeBullets) {
+                    // Calculate distance for fog
+                    float dx = bullet.x - renderPos.x;
+                    float dy = bullet.y - renderPos.y;
+                    float distance = std::sqrt(dx * dx + dy * dy);
+                    
+                    // Calculate fog alpha
+                    sf::Uint8 alpha = calculateFogAlpha(distance);
+                    
+                    // Only draw if visible
+                    if (alpha > 0) {
+                        // Calculate bullet direction for line rendering
+                        float speed = std::sqrt(bullet.vx * bullet.vx + bullet.vy * bullet.vy);
+                        float dirX = (speed > 0.001f) ? bullet.vx / speed : 1.0f;
+                        float dirY = (speed > 0.001f) ? bullet.vy / speed : 0.0f;
+                        
+                        // Create line from bullet position extending 5px in direction of travel
+                        sf::Vertex line[] = {
+                            sf::Vertex(sf::Vector2f(bullet.x, bullet.y), sf::Color(255, 255, 255, alpha)),
+                            sf::Vertex(sf::Vector2f(bullet.x + dirX * 5.0f, bullet.y + dirY * 5.0f), sf::Color(255, 255, 255, alpha))
+                        };
+                        
+                        window.draw(line, 2, sf::Lines);
+                    }
+                }
+            }
+            
+            // Requirement 8.2: Render damage texts
+            {
+                std::lock_guard<std::mutex> lock(damageTextsMutex);
+                
+                for (const auto& damageText : damageTexts) {
+                    // Calculate distance for fog
+                    float dx = damageText.x - renderPos.x;
+                    float dy = damageText.y - renderPos.y;
+                    float distance = std::sqrt(dx * dx + dy * dy);
+                    
+                    // Calculate fog alpha
+                    sf::Uint8 fogAlpha = calculateFogAlpha(distance);
+                    
+                    // Only draw if visible
+                    if (fogAlpha > 0) {
+                        // Get animated position and alpha
+                        float animatedY = damageText.getAnimatedY();
+                        sf::Uint8 textAlpha = damageText.getAlpha();
+                        
+                        // Combine fog and fade-out alpha
+                        sf::Uint8 finalAlpha = static_cast<sf::Uint8>(
+                            (fogAlpha / 255.0f) * (textAlpha / 255.0f) * 255.0f
+                        );
+                        
+                        // Create damage text
+                        sf::Text text;
+                        text.setFont(font);
+                        text.setString("-" + std::to_string(static_cast<int>(damageText.damage)));
+                        text.setCharacterSize(24);
+                        text.setFillColor(sf::Color(255, 0, 0, finalAlpha)); // Red with alpha
+                        text.setStyle(sf::Text::Bold);
+                        
+                        // Center text above player
+                        sf::FloatRect textBounds = text.getLocalBounds();
+                        text.setOrigin(textBounds.width / 2.0f, textBounds.height / 2.0f);
+                        text.setPosition(damageText.x, animatedY);
+                        
+                        window.draw(text);
+                    }
+                }
+            }
+            
             // Draw server player as green circle - always visible
             serverCircle.setRadius(PLAYER_SIZE / 2.0f);
             serverCircle.setPosition(renderPos.x - PLAYER_SIZE / 2.0f, renderPos.y - PLAYER_SIZE / 2.0f);
@@ -3859,12 +4304,11 @@ int main() {
             
             // Draw money balance below health
             // Requirement 1.5: Display money balance in HUD
-            // Note: Money system not yet implemented, showing placeholder
             sf::Text moneyText;
             moneyText.setFont(font);
-            moneyText.setString("Money: $0");  // Placeholder until money system is implemented
+            moneyText.setString("Money: $" + std::to_string(serverPlayer.money));
             moneyText.setCharacterSize(28);
-            moneyText.setFillColor(sf::Color::Yellow);
+            moneyText.setFillColor(sf::Color(255, 215, 0));  // Gold color
             moneyText.setPosition(20.0f, 100.0f);
             window.draw(moneyText);
             
@@ -3874,7 +4318,7 @@ int main() {
             weaponText.setFont(font);
             weaponText.setCharacterSize(28);
             weaponText.setFillColor(sf::Color::White);
-            weaponText.setString("Без оружия");  // "No weapon" in Russian
+            weaponText.setString("No weapon");
             
             // Position in top-right corner
             sf::FloatRect weaponBounds = weaponText.getLocalBounds();

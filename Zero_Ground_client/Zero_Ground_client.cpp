@@ -418,6 +418,52 @@ struct Bullet {
         
         return false;
     }
+    
+    // Requirement 7.3: Check collision with wall
+    bool checkWallCollision(const Wall& wall) const {
+        // Simple point-in-rectangle collision
+        return (x >= wall.x && x <= wall.x + wall.width &&
+                y >= wall.y && y <= wall.y + wall.height);
+    }
+    
+    // Requirement 7.4: Check collision with player (circle collision)
+    bool checkPlayerCollision(float playerX, float playerY, float playerRadius) const {
+        float dx = x - playerX;
+        float dy = y - playerY;
+        float distanceSquared = dx * dx + dy * dy;
+        return distanceSquared <= (playerRadius * playerRadius);
+    }
+};
+
+// Requirement 8.2: Damage text visualization
+struct DamageText {
+    float x = 0.0f;
+    float y = 0.0f;
+    float damage = 0.0f;
+    sf::Clock lifetime;
+    
+    // Check if damage text should be removed (after 1 second)
+    bool shouldRemove() const {
+        return lifetime.getElapsedTime().asSeconds() >= 1.0f;
+    }
+    
+    // Get current Y position with upward animation
+    float getAnimatedY() const {
+        float elapsed = lifetime.getElapsedTime().asSeconds();
+        // Move upward 50 pixels over 1 second
+        return y - (elapsed * 50.0f);
+    }
+    
+    // Get alpha for fade-out effect
+    sf::Uint8 getAlpha() const {
+        float elapsed = lifetime.getElapsedTime().asSeconds();
+        // Fade out in last 0.3 seconds
+        if (elapsed > 0.7f) {
+            float fadeProgress = (elapsed - 0.7f) / 0.3f;
+            return static_cast<sf::Uint8>(255 * (1.0f - fadeProgress));
+        }
+        return 255;
+    }
 };
 
 // Forward declaration
@@ -576,6 +622,50 @@ struct PositionPacket {
     bool isAlive = true;
     uint32_t frameID = 0;
     uint8_t playerId = 0;
+};
+
+// Requirement 4.1-4.5: Purchase validation and transaction
+struct PurchasePacket {
+    uint8_t playerId;
+    uint8_t weaponType;  // Weapon::Type enum value
+};
+
+// Inventory update packet (server → all clients)
+// Sent after successful purchase to synchronize inventory
+struct InventoryPacket {
+    uint8_t playerId;
+    uint8_t slot;        // Which slot changed (0-3)
+    uint8_t weaponType;  // Weapon::Type enum value, 255 = empty slot
+    int newMoneyBalance;
+};
+
+// Requirement 7.6: Shot packet (client → server → all clients)
+// Sent when player fires weapon
+struct ShotPacket {
+    uint8_t playerId;
+    float x, y;          // Shot origin position
+    float dirX, dirY;    // Normalized direction vector
+    uint8_t weaponType;  // Weapon::Type enum value
+    float bulletSpeed;   // Bullet speed for this weapon
+    float damage;        // Damage for this weapon
+    float range;         // Range for this weapon
+};
+
+// Requirement 10.4: Hit packet (server → all clients)
+// Sent when bullet hits a player
+struct HitPacket {
+    uint8_t shooterId;   // Player who fired the bullet
+    uint8_t victimId;    // Player who was hit
+    float damage;        // Damage dealt
+    float hitX, hitY;    // Position where hit occurred
+    bool wasKill;        // True if this hit killed the victim
+};
+
+// Shop positions packet (server → clients)
+// Sent after map generation to synchronize shop locations
+struct ShopPositionsPacket {
+    uint8_t shopCount;
+    // Followed by shopCount * (gridX, gridY) pairs
 };
 
 // ========================
@@ -1354,6 +1444,17 @@ bool shopUIOpen = false;  // Shop UI state
 sf::Clock shopAnimationClock;
 float shopAnimationProgress = 0.0f;  // 0.0 = closed, 1.0 = fully open
 
+// Requirement 7.1: Store active bullets
+std::vector<Bullet> activeBullets;
+std::mutex bulletsMutex;
+
+// Requirement 8.2: Store active damage texts
+std::vector<DamageText> damageTexts;
+std::mutex damageTextsMutex;
+
+// Client player with inventory and weapons
+Player clientPlayer;
+
 // Inventory system
 const int INVENTORY_SLOTS = 6;
 const float INVENTORY_SLOT_SIZE = 100.0f;
@@ -1771,15 +1872,15 @@ PurchaseStatus calculatePurchaseStatus(const Player& player, const Weapon* weapo
     return PurchaseStatus::Purchasable;
 }
 
-// Get purchase status text in Russian
+// Get purchase status text
 std::string getPurchaseStatusText(PurchaseStatus status, int weaponPrice) {
     switch (status) {
         case PurchaseStatus::Purchasable:
-            return "Можно купить";  // "Can purchase"
+            return "Can purchase";
         case PurchaseStatus::InsufficientFunds:
-            return "Недостаточно денег. Требуется: " + std::to_string(weaponPrice);  // "Insufficient funds. Required: [amount]"
+            return "Insufficient funds. Required: $" + std::to_string(weaponPrice);
         case PurchaseStatus::InventoryFull:
-            return "Инвентарь заполнен. Освободите ячейку для покупки.";  // "Inventory full. Free a slot to purchase."
+            return "Inventory full. Free a slot to purchase.";
         default:
             return "";
     }
@@ -1822,7 +1923,7 @@ void renderShopInteractionPrompt(sf::RenderWindow& window, sf::Vector2f playerPo
         // Create prompt text
         sf::Text promptText;
         promptText.setFont(font);
-        promptText.setString("Нажмите B для покупки");  // "Press B to purchase"
+        promptText.setString("Press B to purchase");
         promptText.setCharacterSize(28);
         promptText.setFillColor(sf::Color::White);
         promptText.setOutlineColor(sf::Color::Black);
@@ -1883,7 +1984,7 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
     // Draw title
     sf::Text titleText;
     titleText.setFont(font);
-    titleText.setString("МАГАЗИН ОРУЖИЯ");  // "WEAPON SHOP"
+    titleText.setString("WEAPON SHOP");
     titleText.setCharacterSize(static_cast<unsigned int>(40 * scale));
     titleText.setFillColor(sf::Color(255, 255, 255, static_cast<sf::Uint8>(easedProgress * 255)));
     sf::FloatRect titleBounds = titleText.getLocalBounds();
@@ -1896,7 +1997,7 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
     // Draw player money
     sf::Text moneyText;
     moneyText.setFont(font);
-    moneyText.setString("Деньги: $" + std::to_string(player.money));  // "Money: $"
+    moneyText.setString("Money: $" + std::to_string(player.money));
     moneyText.setCharacterSize(static_cast<unsigned int>(28 * scale));
     moneyText.setFillColor(sf::Color(100, 255, 100, static_cast<sf::Uint8>(easedProgress * 255)));
     moneyText.setPosition(scaledX + 20.0f * scale, scaledY + 70.0f * scale);
@@ -1916,9 +2017,9 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
     };
     
     std::vector<WeaponCategory> categories = {
-        {"Пистолеты", {Weapon::USP, Weapon::GLOCK, Weapon::FIVESEVEN, Weapon::R8}},  // "Pistols"
-        {"Автоматы", {Weapon::GALIL, Weapon::M4, Weapon::AK47}},  // "Rifles"
-        {"Снайперки", {Weapon::M10, Weapon::AWP, Weapon::M40}}  // "Snipers"
+        {"Pistols", {Weapon::USP, Weapon::GLOCK, Weapon::FIVESEVEN, Weapon::R8}},
+        {"Rifles", {Weapon::GALIL, Weapon::M4, Weapon::AK47}},
+        {"Snipers", {Weapon::M10, Weapon::AWP, Weapon::M40}}
     };
     
     // Draw each column
@@ -1999,8 +2100,8 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
             sf::Text weaponStats;
             weaponStats.setFont(font);
             std::ostringstream statsStream;
-            statsStream << "Урон: " << static_cast<int>(weapon->damage) << "\n";  // "Damage: "
-            statsStream << "Магазин: " << weapon->magazineSize;  // "Magazine: "
+            statsStream << "Damage: " << static_cast<int>(weapon->damage) << "\n";
+            statsStream << "Magazine: " << weapon->magazineSize;
             weaponStats.setString(statsStream.str());
             weaponStats.setCharacterSize(static_cast<unsigned int>(16 * scale));
             weaponStats.setFillColor(sf::Color(200, 200, 200, static_cast<sf::Uint8>(easedProgress * 255)));
@@ -2027,7 +2128,7 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
     // Draw close instruction
     sf::Text closeText;
     closeText.setFont(font);
-    closeText.setString("Нажмите B чтобы закрыть");  // "Press B to close"
+    closeText.setString("Press B to close");
     closeText.setCharacterSize(static_cast<unsigned int>(22 * scale));
     closeText.setFillColor(sf::Color(200, 200, 200, static_cast<sf::Uint8>(easedProgress * 255)));
     sf::FloatRect closeBounds = closeText.getLocalBounds();
@@ -2161,11 +2262,29 @@ int main() {
     
     // Initialize client player with starting equipment
     // Requirements: 1.1, 1.2, 1.3
-    Player clientPlayer;
     initializePlayer(clientPlayer);
     clientPlayer.x = clientPos.x;
     clientPlayer.y = clientPos.y;
     std::cout << "Client player initialized with USP and $50,000\n" << std::endl;
+    
+    // Generate shops for standalone client testing
+    // In multiplayer, shops will be received from server
+    if (shops.empty()) {
+        std::cout << "Generating shops for client..." << std::endl;
+        // Create 26 shops in a grid pattern for testing
+        for (int i = 0; i < 26; i++) {
+            Shop shop;
+            // Distribute shops across the map
+            int row = i / 6;
+            int col = i % 6;
+            shop.gridX = 5 + col * 8;  // Spread across X
+            shop.gridY = 5 + row * 8;  // Spread across Y
+            shop.worldX = shop.gridX * CELL_SIZE + CELL_SIZE / 2.0f;
+            shop.worldY = shop.gridY * CELL_SIZE + CELL_SIZE / 2.0f;
+            shops.push_back(shop);
+        }
+        std::cout << "Generated " << shops.size() << " shops for client\n" << std::endl;
+    }
     
     // Clock for delta time calculation
     sf::Clock deltaClock;
@@ -2218,7 +2337,7 @@ int main() {
             
             // Toggle inventory with E key (works in both English and Russian layouts)
             if (event.type == sf::Event::KeyPressed && state == ClientState::MainScreen) {
-                // E key on English layout or У key on Russian layout (same physical key)
+                // E key for inventory
                 if (event.key.code == sf::Keyboard::E) {
                     inventoryOpen = !inventoryOpen;
                     inventoryAnimationClock.restart(); // Start animation
@@ -2282,6 +2401,9 @@ int main() {
             // Requirement 6.1: Handle left mouse button click to fire weapon
             if (event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Left) {
                 Weapon* activeWeapon = clientPlayer.getActiveWeapon();
+                if (activeWeapon == nullptr) {
+                    ErrorHandler::logInfo("Cannot fire: No active weapon. Active slot: " + std::to_string(clientPlayer.activeSlot));
+                }
                 if (activeWeapon != nullptr && !shopUIOpen && !inventoryOpen) {
                     // Check if weapon can fire
                     if (activeWeapon->canFire()) {
@@ -2314,7 +2436,26 @@ int main() {
                             // Fire weapon (consumes ammo)
                             activeWeapon->fire();
                             
-                            // TODO: Add bullet to active bullets list
+                            // Requirement 7.1: Add bullet to active bullets list
+                            // Requirement 10.3: Ensure maximum 20 active bullets per player
+                            {
+                                std::lock_guard<std::mutex> lock(bulletsMutex);
+                                
+                                // Count bullets owned by this player
+                                int playerBulletCount = 0;
+                                for (const auto& b : activeBullets) {
+                                    if (b.ownerId == 0) playerBulletCount++;
+                                }
+                                
+                                // Only add if under limit
+                                if (playerBulletCount < 20) {
+                                    activeBullets.push_back(bullet);
+                                    ErrorHandler::logInfo("Bullet created! Total bullets: " + std::to_string(activeBullets.size()));
+                                } else {
+                                    ErrorHandler::logInfo("Bullet limit reached (20)");
+                                }
+                            }
+                            
                             // TODO: Send shot packet to server
                             
                             ErrorHandler::logInfo("Fired " + activeWeapon->name + " - Ammo: " + 
@@ -2614,6 +2755,136 @@ int main() {
                 }
             }
             
+            // Requirement 7.2: Update bullet positions
+            // Requirement 7.3, 7.4: Check bullet collisions
+            // Requirement 7.5, 10.1, 10.2, 10.3: Remove bullets based on conditions
+            {
+                std::lock_guard<std::mutex> lock(bulletsMutex);
+                
+                // Update all bullets
+                for (auto& bullet : activeBullets) {
+                    bullet.update(deltaTime);
+                }
+                
+                // Requirement 7.3: Check bullet-wall collisions using quadtree
+                if (clientGameMap.spatialIndex != nullptr) {
+                    for (auto& bullet : activeBullets) {
+                        // Query quadtree for walls near bullet (100x100 area around bullet)
+                        sf::FloatRect queryArea(bullet.x - 50.0f, bullet.y - 50.0f, 100.0f, 100.0f);
+                        std::vector<Wall*> nearbyWalls = clientGameMap.spatialIndex->query(queryArea);
+                        
+                        // Check collision with each nearby wall
+                        for (Wall* wall : nearbyWalls) {
+                            if (bullet.checkWallCollision(*wall)) {
+                                // Mark bullet for removal by setting range to 0
+                                bullet.range = 0.0f;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // Requirement 7.4: Check bullet-player collisions
+                const float PLAYER_RADIUS = 20.0f; // PLAYER_SIZE / 2
+                
+                // Check collision with client player (local player)
+                for (auto& bullet : activeBullets) {
+                    if (bullet.range <= 0.0f) continue; // Skip already hit bullets
+                    
+                    // Don't check collision with own bullets
+                    if (bullet.ownerId != 0) {
+                        if (bullet.checkPlayerCollision(clientPos.x, clientPos.y, PLAYER_RADIUS)) {
+                            // Mark bullet for removal
+                            bullet.range = 0.0f;
+                            
+                            // TODO: Damage will be applied by server
+                            ErrorHandler::logInfo("Client player hit! Damage: " + std::to_string(bullet.damage));
+                            
+                            // Requirement 8.2: Create damage text visualization
+                            {
+                                std::lock_guard<std::mutex> lock(damageTextsMutex);
+                                DamageText damageText;
+                                damageText.x = clientPos.x;
+                                damageText.y = clientPos.y - 30.0f; // Start above player
+                                damageText.damage = bullet.damage;
+                                damageTexts.push_back(damageText);
+                            }
+                        }
+                    }
+                }
+                
+                // Check collision with server player
+                sf::Vector2f currentServerPos;
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    currentServerPos = sf::Vector2f(serverPos.x, serverPos.y);
+                }
+                
+                for (auto& bullet : activeBullets) {
+                    if (bullet.range <= 0.0f) continue; // Skip already hit bullets
+                    
+                    // Don't check collision with own bullets (client is owner 0)
+                    if (bullet.ownerId == 0) {
+                        if (bullet.checkPlayerCollision(currentServerPos.x, currentServerPos.y, PLAYER_RADIUS)) {
+                            // Mark bullet for removal
+                            bullet.range = 0.0f;
+                            
+                            // TODO: Damage will be applied by server
+                            ErrorHandler::logInfo("Server player hit! Damage: " + std::to_string(bullet.damage));
+                            
+                            // Requirement 8.2: Create damage text visualization
+                            {
+                                std::lock_guard<std::mutex> lock(damageTextsMutex);
+                                DamageText damageText;
+                                damageText.x = currentServerPos.x;
+                                damageText.y = currentServerPos.y - 30.0f; // Start above player
+                                damageText.damage = bullet.damage;
+                                damageTexts.push_back(damageText);
+                            }
+                        }
+                    }
+                }
+                
+                // Get screen bounds with 20% buffer for culling
+                sf::Vector2f viewCenter = window.getView().getCenter();
+                sf::Vector2f viewSize = window.getView().getSize();
+                float bufferMultiplier = 1.2f;
+                float screenLeft = viewCenter.x - (viewSize.x * bufferMultiplier) / 2.0f;
+                float screenRight = viewCenter.x + (viewSize.x * bufferMultiplier) / 2.0f;
+                float screenTop = viewCenter.y - (viewSize.y * bufferMultiplier) / 2.0f;
+                float screenBottom = viewCenter.y + (viewSize.y * bufferMultiplier) / 2.0f;
+                
+                // Remove bullets that should be removed
+                activeBullets.erase(
+                    std::remove_if(activeBullets.begin(), activeBullets.end(),
+                        [screenLeft, screenRight, screenTop, screenBottom](const Bullet& b) {
+                            // Requirement 7.5: Remove if exceeded range
+                            if (b.shouldRemove()) return true;
+                            
+                            // Requirement 10.2: Remove if outside screen + 20% buffer
+                            if (b.x < screenLeft || b.x > screenRight || 
+                                b.y < screenTop || b.y > screenBottom) {
+                                return true;
+                            }
+                            
+                            return false;
+                        }),
+                    activeBullets.end()
+                );
+            }
+            
+            // Requirement 8.2: Update and remove expired damage texts
+            {
+                std::lock_guard<std::mutex> lock(damageTextsMutex);
+                damageTexts.erase(
+                    std::remove_if(damageTexts.begin(), damageTexts.end(),
+                        [](const DamageText& dt) {
+                            return dt.shouldRemove();
+                        }),
+                    damageTexts.end()
+                );
+            }
+            
             // Update interpolation alpha for smooth rendering
             interpolationAlpha += deltaTime * 10.0f; // Adjust multiplier for smoothness
             if (interpolationAlpha > 1.0f) interpolationAlpha = 1.0f;
@@ -2695,6 +2966,79 @@ int main() {
                 }
             }
             
+            // Requirement 7.1: Render bullets as white lines (5px length, 2px width)
+            {
+                std::lock_guard<std::mutex> lock(bulletsMutex);
+                
+                for (const auto& bullet : activeBullets) {
+                    // Calculate distance for fog
+                    float dx = bullet.x - renderPos.x;
+                    float dy = bullet.y - renderPos.y;
+                    float distance = std::sqrt(dx * dx + dy * dy);
+                    
+                    // Calculate fog alpha
+                    sf::Uint8 alpha = calculateFogAlpha(distance);
+                    
+                    // Only draw if visible
+                    if (alpha > 0) {
+                        // Calculate bullet direction for line rendering
+                        float speed = std::sqrt(bullet.vx * bullet.vx + bullet.vy * bullet.vy);
+                        float dirX = (speed > 0.001f) ? bullet.vx / speed : 1.0f;
+                        float dirY = (speed > 0.001f) ? bullet.vy / speed : 0.0f;
+                        
+                        // Create line from bullet position extending 5px in direction of travel
+                        sf::Vertex line[] = {
+                            sf::Vertex(sf::Vector2f(bullet.x, bullet.y), sf::Color(255, 255, 255, alpha)),
+                            sf::Vertex(sf::Vector2f(bullet.x + dirX * 5.0f, bullet.y + dirY * 5.0f), sf::Color(255, 255, 255, alpha))
+                        };
+                        
+                        window.draw(line, 2, sf::Lines);
+                    }
+                }
+            }
+            
+            // Requirement 8.2: Render damage texts
+            {
+                std::lock_guard<std::mutex> lock(damageTextsMutex);
+                
+                for (const auto& damageText : damageTexts) {
+                    // Calculate distance for fog
+                    float dx = damageText.x - renderPos.x;
+                    float dy = damageText.y - renderPos.y;
+                    float distance = std::sqrt(dx * dx + dy * dy);
+                    
+                    // Calculate fog alpha
+                    sf::Uint8 fogAlpha = calculateFogAlpha(distance);
+                    
+                    // Only draw if visible
+                    if (fogAlpha > 0) {
+                        // Get animated position and alpha
+                        float animatedY = damageText.getAnimatedY();
+                        sf::Uint8 textAlpha = damageText.getAlpha();
+                        
+                        // Combine fog and fade-out alpha
+                        sf::Uint8 finalAlpha = static_cast<sf::Uint8>(
+                            (fogAlpha / 255.0f) * (textAlpha / 255.0f) * 255.0f
+                        );
+                        
+                        // Create damage text
+                        sf::Text text;
+                        text.setFont(font);
+                        text.setString("-" + std::to_string(static_cast<int>(damageText.damage)));
+                        text.setCharacterSize(24);
+                        text.setFillColor(sf::Color(255, 0, 0, finalAlpha)); // Red with alpha
+                        text.setStyle(sf::Text::Bold);
+                        
+                        // Center text above player
+                        sf::FloatRect textBounds = text.getLocalBounds();
+                        text.setOrigin(textBounds.width / 2.0f, textBounds.height / 2.0f);
+                        text.setPosition(damageText.x, animatedY);
+                        
+                        window.draw(text);
+                    }
+                }
+            }
+            
             // Draw local client player as blue circle - always visible
             clientCircle.setRadius(PLAYER_SIZE / 2.0f);
             clientCircle.setFillColor(sf::Color::Blue);
@@ -2734,14 +3078,6 @@ int main() {
             // Requirement 1.5: Display money balance below health in top-left corner
             sf::Text moneyText;
             moneyText.setFont(font);
-            // Get client player from game state
-            Player clientPlayer;
-            {
-                std::lock_guard<std::mutex> lock(mutex);
-                // For now, use a default player with starting money
-                // TODO: Get actual client player from game state
-                clientPlayer.money = 50000;  // Default starting money
-            }
             moneyText.setString("Money: $" + std::to_string(clientPlayer.money));
             moneyText.setCharacterSize(28);
             moneyText.setFillColor(sf::Color(255, 215, 0));  // Gold color
@@ -2764,8 +3100,8 @@ int main() {
                 weaponText.setString(weaponInfo);
                 weaponText.setFillColor(sf::Color::White);
             } else {
-                // Requirement 5.6: Display "Без оружия" when no weapon active
-                weaponText.setString("Без оружия");  // "No weapon" in Russian
+                // Requirement 5.6: Display "No weapon" when no weapon active
+                weaponText.setString("No weapon");
                 weaponText.setFillColor(sf::Color(150, 150, 150));  // Gray color
             }
             
