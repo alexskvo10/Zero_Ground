@@ -1933,6 +1933,41 @@ void udpThread(std::unique_ptr<sf::UdpSocket> socket, const std::string& ip) {
                         ErrorHandler::logInfo("Bullet added from server! Total bullets: " + std::to_string(activeBullets.size()));
                     }
                 }
+                else if (received == sizeof(HitPacket)) {
+                    // Handle hit packet from server
+                    HitPacket* hitPacket = reinterpret_cast<HitPacket*>(buffer);
+                    
+                    ErrorHandler::logInfo("Received hit packet! Shooter: " + std::to_string(hitPacket->shooterId) + 
+                                         ", Victim: " + std::to_string(hitPacket->victimId) + 
+                                         ", Damage: " + std::to_string(hitPacket->damage));
+                    
+                    // Create damage text at hit location
+                    {
+                        std::lock_guard<std::mutex> lock(damageTextsMutex);
+                        DamageText damageText;
+                        damageText.x = hitPacket->hitX;
+                        damageText.y = hitPacket->hitY - 30.0f; // Start above hit position
+                        damageText.damage = hitPacket->damage;
+                        damageTexts.push_back(damageText);
+                    }
+                    
+                    // Mark bullet for removal at hit location
+                    {
+                        std::lock_guard<std::mutex> lock(bulletsMutex);
+                        for (auto& bullet : activeBullets) {
+                            // Find bullet near hit location from the shooter
+                            if (bullet.ownerId == hitPacket->shooterId) {
+                                float dx = bullet.x - hitPacket->hitX;
+                                float dy = bullet.y - hitPacket->hitY;
+                                float distSq = dx * dx + dy * dy;
+                                if (distSq < 100.0f) { // Within 10 pixels
+                                    bullet.range = 0.0f; // Mark for removal
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
                 else {
                     std::ostringstream oss;
                     oss << "Unknown packet size - received " << received << " bytes";
@@ -2602,25 +2637,8 @@ int main() {
                             // Fire weapon (consumes ammo)
                             activeWeapon->fire();
                             
-                            // Requirement 7.1: Add bullet to active bullets list
-                            // Requirement 10.3: Ensure maximum 20 active bullets per player
-                            {
-                                std::lock_guard<std::mutex> lock(bulletsMutex);
-                                
-                                // Count bullets owned by this player
-                                int playerBulletCount = 0;
-                                for (const auto& b : activeBullets) {
-                                    if (b.ownerId == 0) playerBulletCount++;
-                                }
-                                
-                                // Only add if under limit
-                                if (playerBulletCount < 20) {
-                                    activeBullets.push_back(bullet);
-                                    ErrorHandler::logInfo("Bullet created! Total bullets: " + std::to_string(activeBullets.size()));
-                                } else {
-                                    ErrorHandler::logInfo("Bullet limit reached (20)");
-                                }
-                            }
+                            // NOTE: Don't create bullet locally - wait for server to send it back
+                            // This prevents duplicate bullets (local + server response)
                             
                             // Send shot packet to server
                             ShotPacket shotPacket;
@@ -2956,10 +2974,17 @@ int main() {
                 for (auto& bullet : activeBullets) {
                     WallType hitWallType = bullet.checkCellWallCollision(grid, bullet.prevX, bullet.prevY);
                     
-                    // Only stop bullet if it hit a concrete wall
-                    // Wooden walls are penetrable
                     if (hitWallType == WallType::Concrete) {
+                        // Concrete walls stop bullets completely
                         bullet.range = 0.0f;
+                    }
+                    else if (hitWallType == WallType::Wood) {
+                        // Wooden walls reduce bullet speed by 50%
+                        bullet.vx *= 0.5f;
+                        bullet.vy *= 0.5f;
+                        
+                        // Also reduce remaining range proportionally
+                        bullet.range *= 0.5f;
                     }
                 }
                 
@@ -2973,84 +2998,10 @@ int main() {
                     bulletLogClock.restart();
                 }
                 
-                // Check collision with client player (local player)
-                for (auto& bullet : activeBullets) {
-                    if (bullet.range <= 0.0f) continue; // Skip already hit bullets
-                    
-                    // Don't check collision with own bullets
-                    if (bullet.ownerId != 0) {
-                        // Debug: Check distance to player
-                        float dx = bullet.x - clientPos.x;
-                        float dy = bullet.y - clientPos.y;
-                        float distance = std::sqrt(dx * dx + dy * dy);
-                        if (distance < 50.0f) {  // Close to player
-                            ErrorHandler::logInfo("Bullet near client player! Distance: " + std::to_string(distance) + 
-                                                 ", Owner: " + std::to_string(bullet.ownerId));
-                        }
-                        
-                        if (bullet.checkPlayerCollision(clientPos.x, clientPos.y, PLAYER_RADIUS)) {
-                            // Mark bullet for removal
-                            bullet.range = 0.0f;
-                            
-                            // Requirement 8.1: Apply damage to client player
-                            float oldHealth = clientHealth;
-                            clientHealth -= bullet.damage;
-                            if (clientHealth < 0.0f) clientHealth = 0.0f;
-                            
-                            ErrorHandler::logInfo("Client player hit! Damage: " + std::to_string(bullet.damage) + 
-                                                 ", Health: " + std::to_string(oldHealth) + " -> " + std::to_string(clientHealth));
-                            
-                            // Requirement 8.2: Create damage text visualization
-                            {
-                                std::lock_guard<std::mutex> lock(damageTextsMutex);
-                                DamageText damageText;
-                                damageText.x = clientPos.x;
-                                damageText.y = clientPos.y - 30.0f; // Start above player
-                                damageText.damage = bullet.damage;
-                                damageTexts.push_back(damageText);
-                            }
-                            
-                            // Requirement 8.3: Check for player death
-                            if (clientHealth <= 0.0f) {
-                                ErrorHandler::logInfo("!!! CLIENT PLAYER DEATH TRIGGERED !!! Health: " + std::to_string(clientHealth));
-                                ErrorHandler::logInfo("Client player eliminated! Respawn in 5 seconds...");
-                                // TODO: Implement respawn system for client
-                            }
-                        }
-                    }
-                }
-                
-                // Check collision with server player
-                sf::Vector2f currentServerPos;
-                {
-                    std::lock_guard<std::mutex> lock(mutex);
-                    currentServerPos = sf::Vector2f(serverPos.x, serverPos.y);
-                }
-                
-                for (auto& bullet : activeBullets) {
-                    if (bullet.range <= 0.0f) continue; // Skip already hit bullets
-                    
-                    // Don't check collision with own bullets (client is owner 0)
-                    if (bullet.ownerId == 0) {
-                        if (bullet.checkPlayerCollision(currentServerPos.x, currentServerPos.y, PLAYER_RADIUS)) {
-                            // Mark bullet for removal
-                            bullet.range = 0.0f;
-                            
-                            // TODO: Damage will be applied by server
-                            ErrorHandler::logInfo("Server player hit! Damage: " + std::to_string(bullet.damage));
-                            
-                            // Requirement 8.2: Create damage text visualization
-                            {
-                                std::lock_guard<std::mutex> lock(damageTextsMutex);
-                                DamageText damageText;
-                                damageText.x = currentServerPos.x;
-                                damageText.y = currentServerPos.y - 30.0f; // Start above player
-                                damageText.damage = bullet.damage;
-                                damageTexts.push_back(damageText);
-                            }
-                        }
-                    }
-                }
+                // NOTE: Collision detection is now handled by server only
+                // Server will send HitPacket when bullet hits a player
+                // This prevents duplicate damage text (local detection + server notification)
+                // Client only renders bullets, server handles all game logic
                 
                 // Get screen bounds with 20% buffer for culling
                 sf::Vector2f viewCenter = window.getView().getCenter();

@@ -4088,10 +4088,17 @@ int main() {
                 for (auto& bullet : activeBullets) {
                     WallType hitWallType = bullet.checkCellWallCollision(grid, bullet.prevX, bullet.prevY);
                     
-                    // Only stop bullet if it hit a concrete wall
-                    // Wooden walls are penetrable
                     if (hitWallType == WallType::Concrete) {
+                        // Concrete walls stop bullets completely
                         bullet.range = 0.0f;
+                    }
+                    else if (hitWallType == WallType::Wood) {
+                        // Wooden walls reduce bullet speed by 50%
+                        bullet.vx *= 0.5f;
+                        bullet.vy *= 0.5f;
+                        
+                        // Also reduce remaining range proportionally
+                        bullet.range *= 0.5f;
                     }
                 }
                 
@@ -4146,11 +4153,13 @@ int main() {
                             }
                             
                             // Requirement 8.3: Check for player death
+                            bool wasKill = false;
                             if (serverHealth <= 0.0f) {
                                 ErrorHandler::logInfo("!!! SERVER PLAYER DEATH TRIGGERED !!! Health: " + std::to_string(serverHealth));
                                 serverIsAlive = false;
                                 serverWaitingRespawn = true;
                                 serverRespawnTimer.restart();
+                                wasKill = true;
                                 
                                 // Requirement 8.4: Award $5000 to eliminating player
                                 uint8_t killerId = bullet.ownerId;
@@ -4170,6 +4179,24 @@ int main() {
                                 
                                 // TODO: Requirement 9.5: Broadcast death event to all clients
                             }
+                            
+                            // Requirement 10.4: Send hit packet to all clients
+                            HitPacket hitPacket;
+                            hitPacket.shooterId = bullet.ownerId;
+                            hitPacket.victimId = 1; // Server is player 1
+                            hitPacket.damage = bullet.damage;
+                            hitPacket.hitX = serverPos.x;
+                            hitPacket.hitY = serverPos.y;
+                            hitPacket.wasKill = wasKill;
+                            
+                            // Broadcast to all connected clients
+                            for (const auto& client : connectedClients) {
+                                if (client.socket && client.isReady) {
+                                    udpSocket.send(&hitPacket, sizeof(HitPacket), client.address, 53002);
+                                }
+                            }
+                            
+                            ErrorHandler::logInfo("Hit packet sent to all clients");
                             
                             // TODO: Requirement 10.4: Send hit packet to all clients
                         }
@@ -4209,8 +4236,10 @@ int main() {
                             }
                             
                             // Requirement 8.3: Check for player death
+                            bool wasKill = false;
                             if (gameState.isPlayerDead(player.id)) {
                                 gameState.setPlayerAlive(player.id, false);
+                                wasKill = true;
                                 
                                 // Requirement 8.4: Award $5000 to eliminating player
                                 if (gameState.hasPlayer(bullet.ownerId)) {
@@ -4224,7 +4253,24 @@ int main() {
                                 // TODO: Requirement 9.5: Broadcast death event to all clients
                             }
                             
-                            // TODO: Requirement 10.4: Send hit packet to all clients
+                            // Requirement 10.4: Send hit packet to all clients
+                            HitPacket hitPacket;
+                            hitPacket.shooterId = bullet.ownerId;
+                            hitPacket.victimId = player.id;
+                            hitPacket.damage = bullet.damage;
+                            hitPacket.hitX = player.x;
+                            hitPacket.hitY = player.y;
+                            hitPacket.wasKill = wasKill;
+                            
+                            // Broadcast to all connected clients
+                            for (const auto& client : connectedClients) {
+                                if (client.socket && client.isReady) {
+                                    udpSocket.send(&hitPacket, sizeof(HitPacket), client.address, 53002);
+                                }
+                            }
+                            
+                            ErrorHandler::logInfo("Hit packet sent to all clients");
+                            
                             break; // Bullet can only hit one player
                         }
                     }
@@ -4248,7 +4294,7 @@ int main() {
                             ErrorHandler::logInfo("Client player hit! Damage: " + std::to_string(bullet.damage) + 
                                                  ", Health: " + std::to_string(oldHealth) + " -> " + std::to_string(clientHealth));
                             
-                            // Requirement 8.2: Create damage text visualization
+                            // Requirement 8.2: Create damage text visualization on server
                             {
                                 std::lock_guard<std::mutex> lock(damageTextsMutex);
                                 DamageText damageText;
@@ -4259,9 +4305,11 @@ int main() {
                             }
                             
                             // Check if client died
+                            bool wasKill = false;
                             if (clientHealth <= 0.0f && clientIsAlive) {
                                 clientIsAlive = false;
                                 clientWaitingRespawn = true;
+                                wasKill = true;
                                 clientRespawnTimer.restart();
                                 
                                 // Server gets kill reward
@@ -4271,7 +4319,23 @@ int main() {
                                 ErrorHandler::logInfo("!!! CLIENT PLAYER DIED !!! Server gets $5000 reward and +1 score. Server money: $" + std::to_string(serverPlayer.money) + ", Score: " + std::to_string(serverScore));
                             }
                             
-                            // TODO: Requirement 10.4: Send hit packet to client
+                            // Requirement 10.4: Send hit packet to client
+                            HitPacket hitPacket;
+                            hitPacket.shooterId = bullet.ownerId;
+                            hitPacket.victimId = 0; // Client is player 0
+                            hitPacket.damage = bullet.damage;
+                            hitPacket.hitX = clientPos.x;
+                            hitPacket.hitY = clientPos.y;
+                            hitPacket.wasKill = wasKill;
+                            
+                            // Send to client
+                            for (const auto& client : connectedClients) {
+                                if (client.socket && client.isReady) {
+                                    udpSocket.send(&hitPacket, sizeof(HitPacket), client.address, 53002);
+                                }
+                            }
+                            
+                            ErrorHandler::logInfo("Hit packet sent to client");
                         }
                     }
                 }
