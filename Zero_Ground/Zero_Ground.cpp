@@ -3004,6 +3004,11 @@ std::map<sf::IpAddress, Position> clients;
 Position clientPos = { 4850.0f, 250.0f }; // Client position (will be randomized)
 Position clientPosPrevious = { 4850.0f, 250.0f }; // Previous client position
 Position clientPosTarget = { 4850.0f, 250.0f }; // Target client position (latest received)
+float clientHealth = 100.0f; // Client player health (0-100)
+int clientScore = 0; // Client player score
+bool clientIsAlive = true; // Client player alive status
+sf::Clock clientRespawnTimer; // Timer for client respawn
+bool clientWaitingRespawn = false; // Waiting for client respawn flag
 GameMap gameMap;
 GameState gameState; // Thread-safe game state manager
 
@@ -3459,7 +3464,18 @@ int main() {
     initializePlayer(serverPlayer);
     serverPlayer.x = serverPos.x;
     serverPlayer.y = serverPos.y;
-    std::cout << "Server player initialized with USP and $50,000\n" << std::endl;
+    
+    // Debug: Check weapon initialization
+    Weapon* usp = serverPlayer.inventory[0];
+    if (usp != nullptr) {
+        std::cout << "Server player initialized with:" << std::endl;
+        std::cout << "  Weapon: " << usp->name << std::endl;
+        std::cout << "  Ammo: " << usp->currentAmmo << "/" << usp->reserveAmmo << std::endl;
+        std::cout << "  Active slot: " << serverPlayer.activeSlot << std::endl;
+        std::cout << "  Money: $" << serverPlayer.money << "\n" << std::endl;
+    } else {
+        std::cout << "ERROR: Server player weapon is NULL!\n" << std::endl;
+    }
     
     sf::TcpListener tcpListener;
     ErrorHandler::logInfo("=== Starting TCP Server ===");
@@ -3620,12 +3636,17 @@ int main() {
     centerElements();
 
     while (window.isOpen()) {
+        // Set camera view BEFORE processing events so mouse coordinates are correct
+        if (serverState.load() == ServerState::MainScreen) {
+            updateCamera(window, sf::Vector2f(serverPos.x, serverPos.y));
+        }
+        
         sf::Event event;
         while (window.pollEvent(event)) {
             if (event.type == sf::Event::Closed)
                 window.close();
 
-            // ��������� Esc ��� ������������ ������
+            // Handle Esc for fullscreen toggle
             if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape) {
                 toggleFullscreen(window, isFullscreen, desktopMode);
                 centerElements();
@@ -3719,7 +3740,7 @@ int main() {
                             
                             // Create bullet
                             Bullet bullet;
-                            bullet.ownerId = 0;  // Server player ID
+                            bullet.ownerId = 1;  // Server player ID (1 for server, 0 for clients)
                             bullet.x = serverPos.x;
                             bullet.y = serverPos.y;
                             bullet.vx = dx * activeWeapon->bulletSpeed;
@@ -3897,20 +3918,40 @@ int main() {
                 // Requirement 7.4: Check bullet-player collisions
                 const float PLAYER_RADIUS = 20.0f; // PLAYER_SIZE / 2
                 
+                // Debug: Log bullet count
+                static sf::Clock bulletLogClock;
+                if (bulletLogClock.getElapsedTime().asSeconds() > 2.0f && !activeBullets.empty()) {
+                    ErrorHandler::logInfo("Active bullets: " + std::to_string(activeBullets.size()));
+                    bulletLogClock.restart();
+                }
+                
                 // Check collision with server player
                 for (auto& bullet : activeBullets) {
-                    // Don't check collision with own bullets and skip if already dead
-                    if (bullet.ownerId != 0 && serverIsAlive) {
+                    // Don't check collision with own bullets (server is ID=1) and skip if already dead
+                    if (bullet.ownerId != 1 && serverIsAlive) {
+                        // Debug: Check distance to player
+                        float dx = bullet.x - serverPos.x;
+                        float dy = bullet.y - serverPos.y;
+                        float distance = std::sqrt(dx * dx + dy * dy);
+                        if (distance < 50.0f) {  // Close to player
+                            ErrorHandler::logInfo("Bullet near server player! Distance: " + std::to_string(distance) + 
+                                                 ", Owner: " + std::to_string(bullet.ownerId));
+                        }
+                        
                         if (bullet.checkPlayerCollision(serverPos.x, serverPos.y, PLAYER_RADIUS)) {
                             // Requirement 8.1: Apply damage to server player
+                            float oldHealth = serverHealth;
+                            ErrorHandler::logInfo("BEFORE damage: serverHealth = " + std::to_string(serverHealth));
                             serverHealth -= bullet.damage;
+                            ErrorHandler::logInfo("AFTER subtraction: serverHealth = " + std::to_string(serverHealth));
                             if (serverHealth < 0.0f) serverHealth = 0.0f;
+                            ErrorHandler::logInfo("AFTER clamp: serverHealth = " + std::to_string(serverHealth));
                             
                             // Mark bullet for removal
                             bullet.range = 0.0f;
                             
                             ErrorHandler::logInfo("Server player hit! Damage: " + std::to_string(bullet.damage) + 
-                                                 ", Health: " + std::to_string(serverHealth));
+                                                 ", Health: " + std::to_string(oldHealth) + " -> " + std::to_string(serverHealth));
                             
                             // Requirement 8.2: Create damage text visualization
                             {
@@ -3920,10 +3961,13 @@ int main() {
                                 damageText.y = serverPos.y - 30.0f; // Start above player
                                 damageText.damage = bullet.damage;
                                 damageTexts.push_back(damageText);
+                                ErrorHandler::logInfo("Damage text created at (" + std::to_string(damageText.x) + 
+                                                     ", " + std::to_string(damageText.y) + ")");
                             }
                             
                             // Requirement 8.3: Check for player death
                             if (serverHealth <= 0.0f) {
+                                ErrorHandler::logInfo("!!! SERVER PLAYER DEATH TRIGGERED !!! Health: " + std::to_string(serverHealth));
                                 serverIsAlive = false;
                                 serverWaitingRespawn = true;
                                 serverRespawnTimer.restart();
@@ -4005,14 +4049,33 @@ int main() {
                 for (auto& bullet : activeBullets) {
                     if (bullet.range <= 0.0f) continue; // Skip already hit bullets
                     
-                    // Don't check collision with own bullets
-                    if (bullet.ownerId == 0) {
+                    // Don't check collision with own bullets (server bullets hit client)
+                    if (bullet.ownerId == 1 && clientIsAlive) {
                         if (bullet.checkPlayerCollision(clientPos.x, clientPos.y, PLAYER_RADIUS)) {
                             // Mark bullet for removal
                             bullet.range = 0.0f;
                             
-                            // TODO: Requirement 10.4: Send hit packet to all clients
-                            ErrorHandler::logInfo("Client player hit! Damage: " + std::to_string(bullet.damage));
+                            // Apply damage to client
+                            float oldHealth = clientHealth;
+                            clientHealth -= bullet.damage;
+                            if (clientHealth < 0.0f) clientHealth = 0.0f;
+                            
+                            ErrorHandler::logInfo("Client player hit! Damage: " + std::to_string(bullet.damage) + 
+                                                 ", Health: " + std::to_string(oldHealth) + " -> " + std::to_string(clientHealth));
+                            
+                            // Check if client died
+                            if (clientHealth <= 0.0f && clientIsAlive) {
+                                clientIsAlive = false;
+                                clientWaitingRespawn = true;
+                                clientRespawnTimer.restart();
+                                
+                                // Server gets kill reward
+                                serverScore += 5000;
+                                
+                                ErrorHandler::logInfo("!!! CLIENT PLAYER DIED !!! Server gets $5000 reward. Server score: $" + std::to_string(serverScore));
+                            }
+                            
+                            // TODO: Requirement 10.4: Send hit packet to client
                         }
                     }
                 }
@@ -4058,20 +4121,45 @@ int main() {
             }
             
             // Requirement 8.4, 8.5: Handle respawn after 5 seconds
-            if (serverWaitingRespawn && serverRespawnTimer.getElapsedTime().asSeconds() >= 5.0f) {
-                // Requirement 8.5: Restore health to 100 HP on respawn
-                serverHealth = 100.0f;
-                serverIsAlive = true;
-                serverWaitingRespawn = false;
-                
-                // Respawn at original spawn position
-                serverPos.x = 250.0f;
-                serverPos.y = 4850.0f;
-                serverPosPrevious = serverPos;
-                
-                ErrorHandler::logInfo("Server player respawned! Health: 100 HP");
-                
-                // TODO: Requirement 9.5: Broadcast respawn event to all clients
+            if (serverWaitingRespawn) {
+                float respawnTime = serverRespawnTimer.getElapsedTime().asSeconds();
+                if (respawnTime >= 5.0f) {
+                    // Requirement 8.5: Restore health to 100 HP on respawn
+                    ErrorHandler::logInfo("!!! SERVER PLAYER RESPAWNING !!! Time: " + std::to_string(respawnTime));
+                    serverHealth = 100.0f;
+                    serverIsAlive = true;
+                    serverWaitingRespawn = false;
+                    
+                    // Respawn at original spawn position
+                    serverPos.x = 250.0f;
+                    serverPos.y = 4850.0f;
+                    serverPosPrevious = serverPos;
+                    
+                    ErrorHandler::logInfo("Server player respawned! Health: 100 HP");
+                    
+                    // TODO: Requirement 9.5: Broadcast respawn event to all clients
+                }
+            }
+            
+            // Handle client respawn after 5 seconds
+            if (clientWaitingRespawn) {
+                float respawnTime = clientRespawnTimer.getElapsedTime().asSeconds();
+                if (respawnTime >= 5.0f) {
+                    ErrorHandler::logInfo("!!! CLIENT PLAYER RESPAWNING !!! Time: " + std::to_string(respawnTime));
+                    clientHealth = 100.0f;
+                    clientIsAlive = true;
+                    clientWaitingRespawn = false;
+                    
+                    // Respawn at original spawn position
+                    clientPos.x = 4850.0f;
+                    clientPos.y = 250.0f;
+                    clientPosPrevious = clientPos;
+                    clientPosTarget = clientPos;
+                    
+                    ErrorHandler::logInfo("Client player respawned! Health: 100 HP");
+                    
+                    // TODO: Send respawn packet to client
+                }
             }
             
             // Update performance monitoring
@@ -4302,6 +4390,20 @@ int main() {
             healthText.setPosition(20.0f, 60.0f);
             window.draw(healthText);
             
+            // Debug: Log health periodically
+            static sf::Clock healthLogClock;
+            static float lastLoggedHealth = serverHealth;
+            static float lastLoggedClientHealth = clientHealth;
+            if (healthLogClock.getElapsedTime().asSeconds() > 3.0f || 
+                std::abs(serverHealth - lastLoggedHealth) > 0.1f ||
+                std::abs(clientHealth - lastLoggedClientHealth) > 0.1f) {
+                ErrorHandler::logInfo("Current server health: " + std::to_string(serverHealth) + 
+                                     ", Client health: " + std::to_string(clientHealth));
+                lastLoggedHealth = serverHealth;
+                lastLoggedClientHealth = clientHealth;
+                healthLogClock.restart();
+            }
+            
             // Draw money balance below health
             // Requirement 1.5: Display money balance in HUD
             sf::Text moneyText;
@@ -4313,12 +4415,24 @@ int main() {
             window.draw(moneyText);
             
             // Draw weapon info in top-right corner
-            // Note: Weapon system not yet implemented, showing placeholder
+            // Requirements: 5.5, 5.6
             sf::Text weaponText;
             weaponText.setFont(font);
             weaponText.setCharacterSize(28);
-            weaponText.setFillColor(sf::Color::White);
-            weaponText.setString("No weapon");
+            
+            Weapon* currentWeapon = serverPlayer.getActiveWeapon();
+            if (currentWeapon != nullptr) {
+                // Requirement 5.5: Display weapon name and ammo count
+                std::string weaponInfo = currentWeapon->name + ": " + 
+                                        std::to_string(currentWeapon->currentAmmo) + "/" + 
+                                        std::to_string(currentWeapon->reserveAmmo);
+                weaponText.setString(weaponInfo);
+                weaponText.setFillColor(sf::Color::White);
+            } else {
+                // Requirement 5.6: Display "No weapon" when no weapon active
+                weaponText.setString("No weapon");
+                weaponText.setFillColor(sf::Color(150, 150, 150));  // Gray color
+            }
             
             // Position in top-right corner
             sf::FloatRect weaponBounds = weaponText.getLocalBounds();

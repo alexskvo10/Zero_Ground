@@ -2324,12 +2324,18 @@ int main() {
     centerElements();
 
     while (window.isOpen()) {
+        // Set camera view BEFORE processing events so mouse coordinates are correct
+        if (state == ClientState::MainScreen) {
+            sf::Vector2f renderPos = sf::Vector2f(clientPos.x, clientPos.y);
+            updateCamera(window, renderPos);
+        }
+        
         sf::Event event;
         while (window.pollEvent(event)) {
             if (event.type == sf::Event::Closed)
                 window.close();
 
-            // ��������� Esc ��� ������������ ������
+            // Handle Esc for fullscreen toggle
             if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape) {
                 toggleFullscreen(window, isFullscreen, desktopMode);
                 centerElements();
@@ -2787,18 +2793,39 @@ int main() {
                 // Requirement 7.4: Check bullet-player collisions
                 const float PLAYER_RADIUS = 20.0f; // PLAYER_SIZE / 2
                 
+                // Debug: Log bullet count
+                static sf::Clock bulletLogClock;
+                if (bulletLogClock.getElapsedTime().asSeconds() > 2.0f && !activeBullets.empty()) {
+                    ErrorHandler::logInfo("Active bullets: " + std::to_string(activeBullets.size()));
+                    bulletLogClock.restart();
+                }
+                
                 // Check collision with client player (local player)
                 for (auto& bullet : activeBullets) {
                     if (bullet.range <= 0.0f) continue; // Skip already hit bullets
                     
                     // Don't check collision with own bullets
                     if (bullet.ownerId != 0) {
+                        // Debug: Check distance to player
+                        float dx = bullet.x - clientPos.x;
+                        float dy = bullet.y - clientPos.y;
+                        float distance = std::sqrt(dx * dx + dy * dy);
+                        if (distance < 50.0f) {  // Close to player
+                            ErrorHandler::logInfo("Bullet near client player! Distance: " + std::to_string(distance) + 
+                                                 ", Owner: " + std::to_string(bullet.ownerId));
+                        }
+                        
                         if (bullet.checkPlayerCollision(clientPos.x, clientPos.y, PLAYER_RADIUS)) {
                             // Mark bullet for removal
                             bullet.range = 0.0f;
                             
-                            // TODO: Damage will be applied by server
-                            ErrorHandler::logInfo("Client player hit! Damage: " + std::to_string(bullet.damage));
+                            // Requirement 8.1: Apply damage to client player
+                            float oldHealth = clientHealth;
+                            clientHealth -= bullet.damage;
+                            if (clientHealth < 0.0f) clientHealth = 0.0f;
+                            
+                            ErrorHandler::logInfo("Client player hit! Damage: " + std::to_string(bullet.damage) + 
+                                                 ", Health: " + std::to_string(oldHealth) + " -> " + std::to_string(clientHealth));
                             
                             // Requirement 8.2: Create damage text visualization
                             {
@@ -2808,6 +2835,13 @@ int main() {
                                 damageText.y = clientPos.y - 30.0f; // Start above player
                                 damageText.damage = bullet.damage;
                                 damageTexts.push_back(damageText);
+                            }
+                            
+                            // Requirement 8.3: Check for player death
+                            if (clientHealth <= 0.0f) {
+                                ErrorHandler::logInfo("!!! CLIENT PLAYER DEATH TRIGGERED !!! Health: " + std::to_string(clientHealth));
+                                ErrorHandler::logInfo("Client player eliminated! Respawn in 5 seconds...");
+                                // TODO: Implement respawn system for client
                             }
                         }
                     }
