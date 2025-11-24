@@ -4807,31 +4807,92 @@ int main() {
                     float scaledSize = INVENTORY_SLOT_SIZE * scale;
                     float scaleOffset = (INVENTORY_SLOT_SIZE - scaledSize) / 2.0f;
                     
+                    // Check if this slot has a weapon
+                    Weapon* slotWeapon = nullptr;
+                    if (i < 4) { // Only first 4 slots can have weapons
+                        slotWeapon = serverPlayer.inventory[i];
+                    }
+                    
+                    // Highlight active weapon slot
+                    bool isActiveSlot = (i == serverPlayer.activeSlot);
+                    
                     // Create slot rectangle
                     sf::RectangleShape slot(sf::Vector2f(scaledSize, scaledSize));
                     slot.setPosition(slotX + scaleOffset, inventoryY + scaleOffset);
-                    slot.setFillColor(sf::Color(50, 50, 50, slotAlpha)); // Dark semi-transparent
-                    slot.setOutlineColor(sf::Color(150, 150, 150, static_cast<sf::Uint8>(slotEasedProgress * 255))); // Light gray border
+                    
+                    // Different background color for active slot
+                    if (isActiveSlot && slotWeapon != nullptr) {
+                        slot.setFillColor(sf::Color(70, 70, 30, slotAlpha)); // Yellowish tint for active slot
+                        slot.setOutlineColor(sf::Color(255, 215, 0, static_cast<sf::Uint8>(slotEasedProgress * 255))); // Gold border
+                    } else {
+                        slot.setFillColor(sf::Color(50, 50, 50, slotAlpha)); // Dark semi-transparent
+                        slot.setOutlineColor(sf::Color(150, 150, 150, static_cast<sf::Uint8>(slotEasedProgress * 255))); // Light gray border
+                    }
                     slot.setOutlineThickness(2.0f);
                     
                     window.draw(slot);
                     
-                    // Draw slot number
+                    // Draw slot content
                     if (slotEasedProgress > 0.3f) { // Show text after slot is 30% visible
-                        sf::Text slotNumber;
-                        slotNumber.setFont(font);
-                        slotNumber.setString(std::to_string(i + 1));
-                        slotNumber.setCharacterSize(static_cast<unsigned int>(32 * scale)); // Scale text with slot
-                        slotNumber.setFillColor(sf::Color(255, 255, 255, static_cast<sf::Uint8>(slotEasedProgress * 255)));
-                        
-                        // Center the number in the slot
-                        sf::FloatRect textBounds = slotNumber.getLocalBounds();
-                        slotNumber.setPosition(
-                            slotX + scaleOffset + (scaledSize - textBounds.width) / 2.0f - textBounds.left,
-                            inventoryY + scaleOffset + (scaledSize - textBounds.height) / 2.0f - textBounds.top
-                        );
-                        
-                        window.draw(slotNumber);
+                        if (slotWeapon != nullptr) {
+                            // Draw weapon name
+                            sf::Text weaponName;
+                            weaponName.setFont(font);
+                            weaponName.setString(slotWeapon->name);
+                            weaponName.setCharacterSize(static_cast<unsigned int>(16 * scale)); // Smaller text for weapon name
+                            weaponName.setFillColor(sf::Color(255, 255, 255, static_cast<sf::Uint8>(slotEasedProgress * 255)));
+                            
+                            // Center the weapon name in the slot
+                            sf::FloatRect nameBounds = weaponName.getLocalBounds();
+                            weaponName.setPosition(
+                                slotX + scaleOffset + (scaledSize - nameBounds.width) / 2.0f - nameBounds.left,
+                                inventoryY + scaleOffset + (scaledSize - nameBounds.height) / 2.0f - nameBounds.top - 15.0f * scale
+                            );
+                            window.draw(weaponName);
+                            
+                            // Draw ammo count below weapon name
+                            sf::Text ammoText;
+                            ammoText.setFont(font);
+                            ammoText.setString(std::to_string(slotWeapon->currentAmmo) + "/" + std::to_string(slotWeapon->reserveAmmo));
+                            ammoText.setCharacterSize(static_cast<unsigned int>(14 * scale));
+                            ammoText.setFillColor(sf::Color(200, 200, 200, static_cast<sf::Uint8>(slotEasedProgress * 255)));
+                            
+                            // Center the ammo text below weapon name
+                            sf::FloatRect ammoBounds = ammoText.getLocalBounds();
+                            ammoText.setPosition(
+                                slotX + scaleOffset + (scaledSize - ammoBounds.width) / 2.0f - ammoBounds.left,
+                                inventoryY + scaleOffset + (scaledSize - ammoBounds.height) / 2.0f - ammoBounds.top + 15.0f * scale
+                            );
+                            window.draw(ammoText);
+                            
+                            // Draw slot number in top-left corner
+                            sf::Text slotNumber;
+                            slotNumber.setFont(font);
+                            slotNumber.setString(std::to_string(i + 1));
+                            slotNumber.setCharacterSize(static_cast<unsigned int>(18 * scale));
+                            slotNumber.setFillColor(sf::Color(150, 150, 150, static_cast<sf::Uint8>(slotEasedProgress * 200)));
+                            slotNumber.setPosition(
+                                slotX + scaleOffset + 5.0f * scale,
+                                inventoryY + scaleOffset + 5.0f * scale
+                            );
+                            window.draw(slotNumber);
+                        } else {
+                            // Empty slot - draw slot number in center
+                            sf::Text slotNumber;
+                            slotNumber.setFont(font);
+                            slotNumber.setString(std::to_string(i + 1));
+                            slotNumber.setCharacterSize(static_cast<unsigned int>(32 * scale)); // Scale text with slot
+                            slotNumber.setFillColor(sf::Color(100, 100, 100, static_cast<sf::Uint8>(slotEasedProgress * 200))); // Dimmed for empty slots
+                            
+                            // Center the number in the slot
+                            sf::FloatRect textBounds = slotNumber.getLocalBounds();
+                            slotNumber.setPosition(
+                                slotX + scaleOffset + (scaledSize - textBounds.width) / 2.0f - textBounds.left,
+                                inventoryY + scaleOffset + (scaledSize - textBounds.height) / 2.0f - textBounds.top
+                            );
+                            
+                            window.draw(slotNumber);
+                        }
                     }
                 }
             }
