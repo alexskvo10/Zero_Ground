@@ -326,6 +326,33 @@ void initializePlayer(Player& player) {
     player.activeSlot = 0;
 }
 
+// ========================
+// Constants for the cell-based map system
+// ========================
+const float MAP_SIZE = 5100.0f;
+const float CELL_SIZE = 100.0f;
+const int GRID_SIZE = 51;  // 5100 / 100 = 51
+const float PLAYER_SIZE = 20.0f;  // Diameter (radius = 10px)
+const float WALL_WIDTH = 12.0f;
+const float WALL_LENGTH = 100.0f;
+
+// Wall types
+enum class WallType : uint8_t {
+    None = 0,      // No wall
+    Concrete = 1,  // Concrete wall (gray)
+    Wood = 2       // Wooden wall (brown)
+};
+
+// Cell structure for grid-based map
+// Each cell can have walls on its four sides
+// Walls are centered on cell boundaries (WALL_WIDTH/2 on each side)
+struct Cell {
+    WallType topWall = WallType::None;
+    WallType rightWall = WallType::None;
+    WallType bottomWall = WallType::None;
+    WallType leftWall = WallType::None;
+};
+
 struct Shop {
     int gridX = 0;
     int gridY = 0;              // Position in 51×51 grid
@@ -344,6 +371,8 @@ struct Bullet {
     uint8_t ownerId = 0;           // Player who fired
     float x = 0.0f;
     float y = 0.0f;                // Current position
+    float prevX = 0.0f;
+    float prevY = 0.0f;            // Previous position (for ray casting)
     float vx = 0.0f;
     float vy = 0.0f;               // Velocity vector
     float damage = 0.0f;
@@ -354,6 +383,11 @@ struct Bullet {
     
     // Update position
     void update(float deltaTime) {
+        // Store previous position for ray casting
+        prevX = x;
+        prevY = y;
+        
+        // Update current position
         x += vx * deltaTime;
         y += vy * deltaTime;
         
@@ -378,6 +412,104 @@ struct Bullet {
         // Simple point-in-rectangle collision
         return (x >= wall.x && x <= wall.x + wall.width &&
                 y >= wall.y && y <= wall.y + wall.height);
+    }
+    
+    // Helper function to check if a line segment intersects with a rectangle
+    bool lineIntersectsRect(float x1, float y1, float x2, float y2, 
+                           float rectX, float rectY, float rectW, float rectH) const {
+        // Check if either endpoint is inside the rectangle
+        if ((x1 >= rectX && x1 <= rectX + rectW && y1 >= rectY && y1 <= rectY + rectH) ||
+            (x2 >= rectX && x2 <= rectX + rectW && y2 >= rectY && y2 <= rectY + rectH)) {
+            return true;
+        }
+        
+        // Check if line intersects any of the four edges of the rectangle
+        // Using line-line intersection algorithm
+        auto lineIntersectsLine = [](float x1, float y1, float x2, float y2,
+                                     float x3, float y3, float x4, float y4) -> bool {
+            float denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+            if (std::abs(denom) < 0.0001f) return false; // Parallel lines
+            
+            float t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+            float u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
+            
+            return (t >= 0.0f && t <= 1.0f && u >= 0.0f && u <= 1.0f);
+        };
+        
+        // Check intersection with all four edges
+        // Top edge
+        if (lineIntersectsLine(x1, y1, x2, y2, rectX, rectY, rectX + rectW, rectY)) return true;
+        // Right edge
+        if (lineIntersectsLine(x1, y1, x2, y2, rectX + rectW, rectY, rectX + rectW, rectY + rectH)) return true;
+        // Bottom edge
+        if (lineIntersectsLine(x1, y1, x2, y2, rectX, rectY + rectH, rectX + rectW, rectY + rectH)) return true;
+        // Left edge
+        if (lineIntersectsLine(x1, y1, x2, y2, rectX, rectY, rectX, rectY + rectH)) return true;
+        
+        return false;
+    }
+    
+    // Check collision with cell-based walls using ray casting (returns wall type if collision, None otherwise)
+    // This method checks the trajectory from previous position to current position
+    WallType checkCellWallCollision(const std::vector<std::vector<Cell>>& grid, 
+                                    float prevX, float prevY) const {
+        // Calculate which cells the bullet trajectory passes through
+        int cellX1 = static_cast<int>(prevX / CELL_SIZE);
+        int cellY1 = static_cast<int>(prevY / CELL_SIZE);
+        int cellX2 = static_cast<int>(x / CELL_SIZE);
+        int cellY2 = static_cast<int>(y / CELL_SIZE);
+        
+        // Determine the range of cells to check
+        int minCellX = std::max(0, std::min(cellX1, cellX2) - 1);
+        int maxCellX = std::min(GRID_SIZE - 1, std::max(cellX1, cellX2) + 1);
+        int minCellY = std::max(0, std::min(cellY1, cellY2) - 1);
+        int maxCellY = std::min(GRID_SIZE - 1, std::max(cellY1, cellY2) + 1);
+        
+        // Check all cells along the trajectory
+        for (int i = minCellX; i <= maxCellX; i++) {
+            for (int j = minCellY; j <= maxCellY; j++) {
+                float cellWorldX = i * CELL_SIZE;
+                float cellWorldY = j * CELL_SIZE;
+                
+                // Check top wall
+                if (grid[i][j].topWall != WallType::None) {
+                    float wallX = cellWorldX;
+                    float wallY = cellWorldY - WALL_WIDTH / 2.0f;
+                    if (lineIntersectsRect(prevX, prevY, x, y, wallX, wallY, WALL_LENGTH, WALL_WIDTH)) {
+                        return grid[i][j].topWall;
+                    }
+                }
+                
+                // Check right wall
+                if (grid[i][j].rightWall != WallType::None) {
+                    float wallX = cellWorldX + CELL_SIZE - WALL_WIDTH / 2.0f;
+                    float wallY = cellWorldY;
+                    if (lineIntersectsRect(prevX, prevY, x, y, wallX, wallY, WALL_WIDTH, WALL_LENGTH)) {
+                        return grid[i][j].rightWall;
+                    }
+                }
+                
+                // Check bottom wall
+                if (grid[i][j].bottomWall != WallType::None) {
+                    float wallX = cellWorldX;
+                    float wallY = cellWorldY + CELL_SIZE - WALL_WIDTH / 2.0f;
+                    if (lineIntersectsRect(prevX, prevY, x, y, wallX, wallY, WALL_LENGTH, WALL_WIDTH)) {
+                        return grid[i][j].bottomWall;
+                    }
+                }
+                
+                // Check left wall
+                if (grid[i][j].leftWall != WallType::None) {
+                    float wallX = cellWorldX - WALL_WIDTH / 2.0f;
+                    float wallY = cellWorldY;
+                    if (lineIntersectsRect(prevX, prevY, x, y, wallX, wallY, WALL_WIDTH, WALL_LENGTH)) {
+                        return grid[i][j].leftWall;
+                    }
+                }
+            }
+        }
+        
+        return WallType::None;
     }
     
     // Requirement 7.4: Check collision with player (circle collision)
@@ -430,40 +562,11 @@ struct GameMap {
     std::unique_ptr<Quadtree> spatialIndex;
 };
 
-// ========================
-// NEW: Dynamic Map System (5000x5000)
-// ========================
-
-// Constants for the new cell-based map system
-const float MAP_SIZE = 5100.0f;
-const float CELL_SIZE = 100.0f;
-const int GRID_SIZE = 51;  // 5100 / 100 = 51
-const float PLAYER_SIZE = 20.0f;  // Diameter (radius = 10px)
-const float WALL_WIDTH = 12.0f;
-const float WALL_LENGTH = 100.0f;
-
 // Fog of War visibility ranges
 const float FOG_RANGE_1 = 210.0f;   // 100% visibility
 const float FOG_RANGE_2 = 510.0f;   // 60% visibility
 const float FOG_RANGE_3 = 930.0f;   // 40% visibility
 const float FOG_RANGE_4 = 1020.0f;  // 20% visibility
-
-// Wall types
-enum class WallType : uint8_t {
-    None = 0,      // No wall
-    Concrete = 1,  // Concrete wall (gray)
-    Wood = 2       // Wooden wall (brown)
-};
-
-// Cell structure for grid-based map
-// Each cell can have walls on its four sides
-// Walls are centered on cell boundaries (WALL_WIDTH/2 on each side)
-struct Cell {
-    WallType topWall = WallType::None;
-    WallType rightWall = WallType::None;
-    WallType bottomWall = WallType::None;
-    WallType leftWall = WallType::None;
-};
 
 // ========================
 // Fog of War System
@@ -1250,6 +1353,7 @@ struct MapDataPacket {
 struct PositionPacket {
     float x = 0.0f;
     float y = 0.0f;
+    float health = 100.0f;
     bool isAlive = true;
     uint32_t frameID = 0;
     uint8_t playerId = 0;
@@ -3278,52 +3382,95 @@ void udpListenerThread(sf::UdpSocket* socket, PerformanceMonitor* perfMonitor) {
     const float UPDATE_INTERVAL = 1.0f / 20.0f; // 20Hz = 50ms per update
     
     while (true) {
-        // Receive position updates from clients
-        PositionPacket receivedPacket;
+        // Receive packets from clients (position or shot)
+        char buffer[256]; // Buffer large enough for any packet type
         std::size_t received = 0;
         sf::IpAddress sender;
         unsigned short senderPort;
         
-        sf::Socket::Status status = socket->receive(&receivedPacket, sizeof(PositionPacket), received, sender, senderPort);
+        sf::Socket::Status status = socket->receive(buffer, sizeof(buffer), received, sender, senderPort);
         
-        if (status == sf::Socket::Done && received == sizeof(PositionPacket)) {
+        if (status == sf::Socket::Done) {
             // Track network bandwidth
             if (perfMonitor) {
                 perfMonitor->recordNetworkReceived(received);
             }
             
-            // Validate received position
-            if (validatePosition(receivedPacket)) {
-                // Update GameState with validated position
-                gameState.updatePlayerPosition(receivedPacket.playerId, receivedPacket.x, receivedPacket.y);
+            // Determine packet type by size
+            if (received == sizeof(PositionPacket)) {
+                // Handle position packet
+                PositionPacket* receivedPacket = reinterpret_cast<PositionPacket*>(buffer);
                 
-                // Update client position with interpolation support
-                {
-                    std::lock_guard<std::mutex> lock(mutex);
+                // Validate received position
+                if (validatePosition(*receivedPacket)) {
+                    // Update GameState with validated position
+                    gameState.updatePlayerPosition(receivedPacket->playerId, receivedPacket->x, receivedPacket->y);
                     
-                    // Store previous position for interpolation
-                    clientPosPrevious.x = clientPosTarget.x;
-                    clientPosPrevious.y = clientPosTarget.y;
-                    
-                    // Update target position (latest received)
-                    clientPosTarget.x = receivedPacket.x;
-                    clientPosTarget.y = receivedPacket.y;
-                    
-                    // Also update legacy clients map for backward compatibility
-                    Position pos;
-                    pos.x = receivedPacket.x;
-                    pos.y = receivedPacket.y;
-                    clients[sender] = pos;
+                    // Update client position with interpolation support
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        
+                        // Store previous position for interpolation
+                        clientPosPrevious.x = clientPosTarget.x;
+                        clientPosPrevious.y = clientPosTarget.y;
+                        
+                        // Update target position (latest received)
+                        clientPosTarget.x = receivedPacket->x;
+                        clientPosTarget.y = receivedPacket->y;
+                        
+                        // Also update legacy clients map for backward compatibility
+                        Position pos;
+                        pos.x = receivedPacket->x;
+                        pos.y = receivedPacket->y;
+                        clients[sender] = pos;
+                    }
                 }
             }
-            // Note: validatePosition already logs the error if invalid
-        } else if (status == sf::Socket::Done && received != sizeof(PositionPacket)) {
-            std::ostringstream oss;
-            oss << "Position packet size mismatch from " << sender.toString() 
-                << " - expected " << sizeof(PositionPacket) << " bytes, got " << received;
-            ErrorHandler::handleInvalidPacket(oss.str());
+            else if (received == sizeof(ShotPacket)) {
+                // Handle shot packet
+                ShotPacket* shotPacket = reinterpret_cast<ShotPacket*>(buffer);
+                
+                ErrorHandler::logInfo("Received shot packet from client! Owner: " + std::to_string(shotPacket->playerId));
+                
+                // Create bullet on server
+                Bullet bullet;
+                bullet.ownerId = shotPacket->playerId;
+                bullet.x = shotPacket->x;
+                bullet.y = shotPacket->y;
+                bullet.prevX = shotPacket->x;  // Initialize previous position
+                bullet.prevY = shotPacket->y;
+                bullet.vx = shotPacket->dirX * shotPacket->bulletSpeed;
+                bullet.vy = shotPacket->dirY * shotPacket->bulletSpeed;
+                bullet.damage = shotPacket->damage;
+                bullet.range = shotPacket->range;
+                bullet.maxRange = shotPacket->range;
+                bullet.weaponType = static_cast<Weapon::Type>(shotPacket->weaponType);
+                
+                // Add bullet to active bullets list
+                {
+                    std::lock_guard<std::mutex> lock(bulletsMutex);
+                    activeBullets.push_back(bullet);
+                    ErrorHandler::logInfo("Client bullet added! Total bullets: " + std::to_string(activeBullets.size()));
+                }
+                
+                // Broadcast shot packet to all clients
+                {
+                    std::lock_guard<std::mutex> lock(clientsMutex);
+                    for (const auto& client : connectedClients) {
+                        if (client.socket && client.isReady) {
+                            socket->send(shotPacket, sizeof(ShotPacket), client.address, 53002);
+                        }
+                    }
+                }
+            }
+            else {
+                std::ostringstream oss;
+                oss << "Unknown packet size from " << sender.toString() 
+                    << " - received " << received << " bytes";
+                ErrorHandler::handleInvalidPacket(oss.str());
+            }
         } else if (status != sf::Socket::NotReady && status != sf::Socket::Done) {
-            ErrorHandler::logUDPError("Receive position packet", "Socket error occurred");
+            ErrorHandler::logUDPError("Receive packet", "Socket error occurred");
         }
         
         // Send position updates to clients at 20Hz
@@ -3352,12 +3499,30 @@ void udpListenerThread(sf::UdpSocket* socket, PerformanceMonitor* perfMonitor) {
                 PositionPacket serverPacket;
                 serverPacket.x = serverPos.x;
                 serverPacket.y = serverPos.y;
-                serverPacket.isAlive = true;
+                serverPacket.health = serverHealth;
+                serverPacket.isAlive = serverIsAlive;
                 serverPacket.frameID = static_cast<uint32_t>(std::time(nullptr));
                 serverPacket.playerId = 0; // Server is player 0
                 
                 // Send server position
                 socket->send(&serverPacket, sizeof(PositionPacket), client.address, 53002);
+                
+                // Track network bandwidth
+                if (perfMonitor) {
+                    perfMonitor->recordNetworkSent(sizeof(PositionPacket));
+                }
+                
+                // Send client's own position and health back to them
+                // This is important so client knows their health (calculated on server)
+                PositionPacket clientPacket;
+                clientPacket.x = clientPos.x;
+                clientPacket.y = clientPos.y;
+                clientPacket.health = clientHealth;
+                clientPacket.isAlive = clientIsAlive;
+                clientPacket.frameID = static_cast<uint32_t>(std::time(nullptr));
+                clientPacket.playerId = 1; // Client is player 1
+                
+                socket->send(&clientPacket, sizeof(PositionPacket), client.address, 53002);
                 
                 // Track network bandwidth
                 if (perfMonitor) {
@@ -3743,6 +3908,8 @@ int main() {
                             bullet.ownerId = 1;  // Server player ID (1 for server, 0 for clients)
                             bullet.x = serverPos.x;
                             bullet.y = serverPos.y;
+                            bullet.prevX = serverPos.x;  // Initialize previous position
+                            bullet.prevY = serverPos.y;
                             bullet.vx = dx * activeWeapon->bulletSpeed;
                             bullet.vy = dy * activeWeapon->bulletSpeed;
                             bullet.damage = activeWeapon->damage;
@@ -3773,7 +3940,26 @@ int main() {
                                 }
                             }
                             
-                            // TODO: Send shot packet to clients
+                            // Send shot packet to all clients
+                            ShotPacket shotPacket;
+                            shotPacket.playerId = 1;  // Server player ID
+                            shotPacket.x = serverPos.x;
+                            shotPacket.y = serverPos.y;
+                            shotPacket.dirX = dx;
+                            shotPacket.dirY = dy;
+                            shotPacket.weaponType = static_cast<uint8_t>(activeWeapon->type);
+                            shotPacket.bulletSpeed = activeWeapon->bulletSpeed;
+                            shotPacket.damage = activeWeapon->damage;
+                            shotPacket.range = activeWeapon->range;
+                            
+                            {
+                                std::lock_guard<std::mutex> lock(clientsMutex);
+                                for (const auto& client : connectedClients) {
+                                    if (client.socket && client.isReady) {
+                                        udpSocket.send(&shotPacket, sizeof(ShotPacket), client.address, 53002);
+                                    }
+                                }
+                            }
                             
                             ErrorHandler::logInfo("Fired " + activeWeapon->name + " - Ammo: " + 
                                                  std::to_string(activeWeapon->currentAmmo) + "/" + 
@@ -3897,21 +4083,15 @@ int main() {
                     bullet.update(deltaTime);
                 }
                 
-                // Requirement 7.3: Check bullet-wall collisions using quadtree
-                if (gameMap.spatialIndex != nullptr) {
-                    for (auto& bullet : activeBullets) {
-                        // Query quadtree for walls near bullet (100x100 area around bullet)
-                        sf::FloatRect queryArea(bullet.x - 50.0f, bullet.y - 50.0f, 100.0f, 100.0f);
-                        std::vector<Wall*> nearbyWalls = gameMap.spatialIndex->query(queryArea);
-                        
-                        // Check collision with each nearby wall
-                        for (Wall* wall : nearbyWalls) {
-                            if (bullet.checkWallCollision(*wall)) {
-                                // Mark bullet for removal by setting range to 0
-                                bullet.range = 0.0f;
-                                break;
-                            }
-                        }
+                // Requirement 7.3: Check bullet-wall collisions with cell-based grid
+                // Bullets pass through wooden walls but stop at concrete walls
+                for (auto& bullet : activeBullets) {
+                    WallType hitWallType = bullet.checkCellWallCollision(grid, bullet.prevX, bullet.prevY);
+                    
+                    // Only stop bullet if it hit a concrete wall
+                    // Wooden walls are penetrable
+                    if (hitWallType == WallType::Concrete) {
+                        bullet.range = 0.0f;
                     }
                 }
                 
@@ -3975,9 +4155,14 @@ int main() {
                                 // Requirement 8.4: Award $5000 to eliminating player
                                 uint8_t killerId = bullet.ownerId;
                                 
-                                // Award money to killer (if it's a player in GameState)
-                                if (gameState.hasPlayer(killerId)) {
+                                // Award money to killer
+                                if (killerId == 0) {
+                                    // Client killed server - client will award itself when it sees serverHealth <= 0
+                                    ErrorHandler::logInfo("!!! SERVER PLAYER DIED !!! Killed by client (player 0)");
+                                } else if (gameState.hasPlayer(killerId)) {
+                                    // Other player killed server
                                     gameState.awardMoney(killerId, 5000);
+                                    ErrorHandler::logInfo("!!! SERVER PLAYER DIED !!! Player " + std::to_string(killerId) + " gets $5000 reward");
                                 }
                                 
                                 ErrorHandler::logInfo("Server player eliminated by player " + 
@@ -4063,6 +4248,16 @@ int main() {
                             ErrorHandler::logInfo("Client player hit! Damage: " + std::to_string(bullet.damage) + 
                                                  ", Health: " + std::to_string(oldHealth) + " -> " + std::to_string(clientHealth));
                             
+                            // Requirement 8.2: Create damage text visualization
+                            {
+                                std::lock_guard<std::mutex> lock(damageTextsMutex);
+                                DamageText damageText;
+                                damageText.x = clientPos.x;
+                                damageText.y = clientPos.y - 30.0f; // Start above player
+                                damageText.damage = bullet.damage;
+                                damageTexts.push_back(damageText);
+                            }
+                            
                             // Check if client died
                             if (clientHealth <= 0.0f && clientIsAlive) {
                                 clientIsAlive = false;
@@ -4070,9 +4265,10 @@ int main() {
                                 clientRespawnTimer.restart();
                                 
                                 // Server gets kill reward
-                                serverScore += 5000;
+                                serverPlayer.money += 5000;
+                                serverScore += 1;
                                 
-                                ErrorHandler::logInfo("!!! CLIENT PLAYER DIED !!! Server gets $5000 reward. Server score: $" + std::to_string(serverScore));
+                                ErrorHandler::logInfo("!!! CLIENT PLAYER DIED !!! Server gets $5000 reward and +1 score. Server money: $" + std::to_string(serverPlayer.money) + ", Score: " + std::to_string(serverScore));
                             }
                             
                             // TODO: Requirement 10.4: Send hit packet to client
@@ -4221,10 +4417,6 @@ int main() {
             // Render visible walls using cell-based system
             renderVisibleWalls(window, sf::Vector2f(serverPos.x, serverPos.y), grid);
             
-            // Render shops with fog of war integration
-            // Requirements: 2.6, 3.1, 10.5
-            renderShops(window, sf::Vector2f(serverPos.x, serverPos.y), shops);
-            
             // Update and render connected clients with interpolation
             {
                 std::lock_guard<std::mutex> lock(mutex);
@@ -4365,6 +4557,10 @@ int main() {
             // Render fog overlay on top of everything (creates vignette effect)
             renderFogOverlay(window, renderPos);
             
+            // Render shops AFTER fog overlay so they are visible
+            // Requirements: 2.6, 3.1, 10.5
+            renderShops(window, sf::Vector2f(serverPos.x, serverPos.y), shops);
+            
             // Reset view to default for UI rendering
             // UI elements (score, health) need to be drawn in screen coordinates, not world coordinates
             sf::View uiView;
@@ -4441,6 +4637,23 @@ int main() {
                 20.0f
             );
             window.draw(weaponText);
+            
+            // Draw "Reloading..." text if weapon is reloading
+            if (currentWeapon != nullptr && currentWeapon->isReloading) {
+                sf::Text reloadingText;
+                reloadingText.setFont(font);
+                reloadingText.setString("Reloading...");
+                reloadingText.setCharacterSize(24);
+                reloadingText.setFillColor(sf::Color::Yellow);
+                
+                // Position below weapon info
+                sf::FloatRect reloadingBounds = reloadingText.getLocalBounds();
+                reloadingText.setPosition(
+                    windowSize.x - reloadingBounds.width - 20.0f - reloadingBounds.left,
+                    60.0f  // Below weapon text (20 + 28 + 12 spacing)
+                );
+                window.draw(reloadingText);
+            }
             
             // Update shop UI animation
             const float SHOP_ANIMATION_DURATION = 0.3f; // 300ms animation

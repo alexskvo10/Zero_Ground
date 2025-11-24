@@ -390,6 +390,8 @@ struct Bullet {
     uint8_t ownerId = 0;           // Player who fired
     float x = 0.0f;
     float y = 0.0f;                // Current position
+    float prevX = 0.0f;
+    float prevY = 0.0f;            // Previous position (for ray casting)
     float vx = 0.0f;
     float vy = 0.0f;               // Velocity vector
     float damage = 0.0f;
@@ -400,6 +402,11 @@ struct Bullet {
     
     // Update position
     void update(float deltaTime) {
+        // Store previous position for ray casting
+        prevX = x;
+        prevY = y;
+        
+        // Update current position
         x += vx * deltaTime;
         y += vy * deltaTime;
         
@@ -424,6 +431,104 @@ struct Bullet {
         // Simple point-in-rectangle collision
         return (x >= wall.x && x <= wall.x + wall.width &&
                 y >= wall.y && y <= wall.y + wall.height);
+    }
+    
+    // Helper function to check if a line segment intersects with a rectangle
+    bool lineIntersectsRect(float x1, float y1, float x2, float y2, 
+                           float rectX, float rectY, float rectW, float rectH) const {
+        // Check if either endpoint is inside the rectangle
+        if ((x1 >= rectX && x1 <= rectX + rectW && y1 >= rectY && y1 <= rectY + rectH) ||
+            (x2 >= rectX && x2 <= rectX + rectW && y2 >= rectY && y2 <= rectY + rectH)) {
+            return true;
+        }
+        
+        // Check if line intersects any of the four edges of the rectangle
+        // Using line-line intersection algorithm
+        auto lineIntersectsLine = [](float x1, float y1, float x2, float y2,
+                                     float x3, float y3, float x4, float y4) -> bool {
+            float denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+            if (std::abs(denom) < 0.0001f) return false; // Parallel lines
+            
+            float t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+            float u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
+            
+            return (t >= 0.0f && t <= 1.0f && u >= 0.0f && u <= 1.0f);
+        };
+        
+        // Check intersection with all four edges
+        // Top edge
+        if (lineIntersectsLine(x1, y1, x2, y2, rectX, rectY, rectX + rectW, rectY)) return true;
+        // Right edge
+        if (lineIntersectsLine(x1, y1, x2, y2, rectX + rectW, rectY, rectX + rectW, rectY + rectH)) return true;
+        // Bottom edge
+        if (lineIntersectsLine(x1, y1, x2, y2, rectX, rectY + rectH, rectX + rectW, rectY + rectH)) return true;
+        // Left edge
+        if (lineIntersectsLine(x1, y1, x2, y2, rectX, rectY, rectX, rectY + rectH)) return true;
+        
+        return false;
+    }
+    
+    // Check collision with cell-based walls using ray casting (returns wall type if collision, None otherwise)
+    // This method checks the trajectory from previous position to current position
+    WallType checkCellWallCollision(const std::vector<std::vector<Cell>>& grid, 
+                                    float prevX, float prevY) const {
+        // Calculate which cells the bullet trajectory passes through
+        int cellX1 = static_cast<int>(prevX / CELL_SIZE);
+        int cellY1 = static_cast<int>(prevY / CELL_SIZE);
+        int cellX2 = static_cast<int>(x / CELL_SIZE);
+        int cellY2 = static_cast<int>(y / CELL_SIZE);
+        
+        // Determine the range of cells to check
+        int minCellX = std::max(0, std::min(cellX1, cellX2) - 1);
+        int maxCellX = std::min(GRID_SIZE - 1, std::max(cellX1, cellX2) + 1);
+        int minCellY = std::max(0, std::min(cellY1, cellY2) - 1);
+        int maxCellY = std::min(GRID_SIZE - 1, std::max(cellY1, cellY2) + 1);
+        
+        // Check all cells along the trajectory
+        for (int i = minCellX; i <= maxCellX; i++) {
+            for (int j = minCellY; j <= maxCellY; j++) {
+                float cellWorldX = i * CELL_SIZE;
+                float cellWorldY = j * CELL_SIZE;
+                
+                // Check top wall
+                if (grid[i][j].topWall != WallType::None) {
+                    float wallX = cellWorldX;
+                    float wallY = cellWorldY - WALL_WIDTH / 2.0f;
+                    if (lineIntersectsRect(prevX, prevY, x, y, wallX, wallY, WALL_LENGTH, WALL_WIDTH)) {
+                        return grid[i][j].topWall;
+                    }
+                }
+                
+                // Check right wall
+                if (grid[i][j].rightWall != WallType::None) {
+                    float wallX = cellWorldX + CELL_SIZE - WALL_WIDTH / 2.0f;
+                    float wallY = cellWorldY;
+                    if (lineIntersectsRect(prevX, prevY, x, y, wallX, wallY, WALL_WIDTH, WALL_LENGTH)) {
+                        return grid[i][j].rightWall;
+                    }
+                }
+                
+                // Check bottom wall
+                if (grid[i][j].bottomWall != WallType::None) {
+                    float wallX = cellWorldX;
+                    float wallY = cellWorldY + CELL_SIZE - WALL_WIDTH / 2.0f;
+                    if (lineIntersectsRect(prevX, prevY, x, y, wallX, wallY, WALL_LENGTH, WALL_WIDTH)) {
+                        return grid[i][j].bottomWall;
+                    }
+                }
+                
+                // Check left wall
+                if (grid[i][j].leftWall != WallType::None) {
+                    float wallX = cellWorldX - WALL_WIDTH / 2.0f;
+                    float wallY = cellWorldY;
+                    if (lineIntersectsRect(prevX, prevY, x, y, wallX, wallY, WALL_WIDTH, WALL_LENGTH)) {
+                        return grid[i][j].leftWall;
+                    }
+                }
+            }
+        }
+        
+        return WallType::None;
     }
     
     // Requirement 7.4: Check collision with player (circle collision)
@@ -619,6 +724,7 @@ struct MapDataPacket {
 struct PositionPacket {
     float x = 0.0f;
     float y = 0.0f;
+    float health = 100.0f;
     bool isAlive = true;
     uint32_t frameID = 0;
     uint8_t playerId = 0;
@@ -1465,6 +1571,8 @@ sf::Clock inventoryAnimationClock;
 
 // HUD variables
 float clientHealth = 100.0f; // Client player health (0-100)
+float serverHealth = 100.0f; // Server player health (0-100)
+bool serverWasAlive = true; // Track if server was alive in previous frame
 int clientScore = 0; // Client player score
 bool clientIsAlive = true; // Client player alive status
 
@@ -1745,46 +1853,96 @@ void udpThread(std::unique_ptr<sf::UdpSocket> socket, const std::string& ip) {
         }
         
         // Receive positions from server (non-blocking)
-        PositionPacket inPacket;
+        char buffer[256];  // Buffer large enough for any packet type
         std::size_t received;
         sf::IpAddress sender;
         unsigned short port;
         
-        sf::Socket::Status status = socket->receive(&inPacket, sizeof(PositionPacket), received, sender, port);
+        sf::Socket::Status status = socket->receive(buffer, sizeof(buffer), received, sender, port);
         
         if (status == sf::Socket::Done) {
-            // Validate packet
-            if (received == sizeof(PositionPacket)) {
-                if (sender == sf::IpAddress(ip)) {
-                    if (validatePosition(inPacket)) {
+            if (sender == sf::IpAddress(ip)) {
+                // Check packet type by size
+                if (received == sizeof(PositionPacket)) {
+                    PositionPacket* inPacket = reinterpret_cast<PositionPacket*>(buffer);
+                    
+                    if (validatePosition(*inPacket)) {
                         std::lock_guard<std::mutex> lock(mutex);
                         
                         // Update server position with interpolation support
-                        if (inPacket.playerId == 0) { // Server is player 0
+                        if (inPacket->playerId == 0) { // Server is player 0
                             // Store previous position for interpolation
                             serverPosPrevious.x = serverPosTarget.x;
                             serverPosPrevious.y = serverPosTarget.y;
                             
                             // Update target position (latest received)
-                            serverPosTarget.x = inPacket.x;
-                            serverPosTarget.y = inPacket.y;
+                            serverPosTarget.x = inPacket->x;
+                            serverPosTarget.y = inPacket->y;
+                            
+                            // Update server health
+                            float previousServerHealth = serverHealth;
+                            serverHealth = inPacket->health;
+                            
+                            // Check if server just died (was alive, now dead)
+                            if (serverWasAlive && serverHealth <= 0.0f) {
+                                serverWasAlive = false;
+                                clientPlayer.money += 5000;
+                                clientScore += 1;
+                                ErrorHandler::logInfo("!!! SERVER PLAYER DIED !!! Client gets $5000 reward and +1 score. Client money: $" + std::to_string(clientPlayer.money) + ", Score: " + std::to_string(clientScore));
+                            } else if (serverHealth > 0.0f) {
+                                serverWasAlive = true;
+                            }
+                            
+                            serverConnected = true;
+                            lastPacketReceived.restart(); // Reset timeout timer
+                        }
+                        else if (inPacket->playerId == 1) { // Client's own position and health from server
+                            // Update client health (calculated on server when hit by bullets)
+                            clientHealth = inPacket->health;
+                            clientIsAlive = inPacket->isAlive;
                             
                             serverConnected = true;
                             lastPacketReceived.restart(); // Reset timeout timer
                         }
                     }
-                    // Note: validatePosition already logs the error if invalid
-                } else {
-                    ErrorHandler::handleInvalidPacket("Packet from unexpected sender: " + sender.toString(), ip);
+                }
+                else if (received == sizeof(ShotPacket)) {
+                    // Handle shot packet from server
+                    ShotPacket* shotPacket = reinterpret_cast<ShotPacket*>(buffer);
+                    
+                    ErrorHandler::logInfo("Received shot packet! Owner: " + std::to_string(shotPacket->playerId));
+                    
+                    // Create bullet on client
+                    Bullet bullet;
+                    bullet.ownerId = shotPacket->playerId;
+                    bullet.x = shotPacket->x;
+                    bullet.y = shotPacket->y;
+                    bullet.prevX = shotPacket->x;  // Initialize previous position
+                    bullet.prevY = shotPacket->y;
+                    bullet.vx = shotPacket->dirX * shotPacket->bulletSpeed;
+                    bullet.vy = shotPacket->dirY * shotPacket->bulletSpeed;
+                    bullet.damage = shotPacket->damage;
+                    bullet.range = shotPacket->range;
+                    bullet.maxRange = shotPacket->range;
+                    bullet.weaponType = static_cast<Weapon::Type>(shotPacket->weaponType);
+                    
+                    // Add bullet to active bullets list
+                    {
+                        std::lock_guard<std::mutex> lock(bulletsMutex);
+                        activeBullets.push_back(bullet);
+                        ErrorHandler::logInfo("Bullet added from server! Total bullets: " + std::to_string(activeBullets.size()));
+                    }
+                }
+                else {
+                    std::ostringstream oss;
+                    oss << "Unknown packet size - received " << received << " bytes";
+                    ErrorHandler::handleInvalidPacket(oss.str(), ip);
                 }
             } else {
-                std::ostringstream oss;
-                oss << "Position packet size mismatch - expected " << sizeof(PositionPacket) 
-                    << " bytes, got " << received;
-                ErrorHandler::handleInvalidPacket(oss.str(), ip);
+                ErrorHandler::handleInvalidPacket("Packet from unexpected sender: " + sender.toString(), ip);
             }
         } else if (status != sf::Socket::NotReady) {
-            ErrorHandler::logUDPError("Receive position packet", "Socket error occurred");
+            ErrorHandler::logUDPError("Receive packet", "Socket error occurred");
         }
         
         // Check for connection loss (2 second timeout)
@@ -2432,6 +2590,8 @@ int main() {
                             bullet.ownerId = 0;  // Client player ID
                             bullet.x = clientPos.x;
                             bullet.y = clientPos.y;
+                            bullet.prevX = clientPos.x;  // Initialize previous position
+                            bullet.prevY = clientPos.y;
                             bullet.vx = dx * activeWeapon->bulletSpeed;
                             bullet.vy = dy * activeWeapon->bulletSpeed;
                             bullet.damage = activeWeapon->damage;
@@ -2462,7 +2622,26 @@ int main() {
                                 }
                             }
                             
-                            // TODO: Send shot packet to server
+                            // Send shot packet to server
+                            ShotPacket shotPacket;
+                            shotPacket.playerId = 0; // Client is player 0
+                            shotPacket.x = clientPos.x;
+                            shotPacket.y = clientPos.y;
+                            shotPacket.dirX = dx;
+                            shotPacket.dirY = dy;
+                            shotPacket.weaponType = static_cast<uint8_t>(activeWeapon->type);
+                            shotPacket.bulletSpeed = activeWeapon->bulletSpeed;
+                            shotPacket.damage = activeWeapon->damage;
+                            shotPacket.range = activeWeapon->range;
+                            
+                            // Create temporary UDP socket for sending shot
+                            sf::UdpSocket shotSocket;
+                            sf::Socket::Status shotStatus = shotSocket.send(&shotPacket, sizeof(ShotPacket), sf::IpAddress(serverIP), 53001);
+                            if (shotStatus == sf::Socket::Done) {
+                                ErrorHandler::logInfo("Shot packet sent to server");
+                            } else {
+                                ErrorHandler::logUDPError("Send shot packet", "Failed to send to server");
+                            }
                             
                             ErrorHandler::logInfo("Fired " + activeWeapon->name + " - Ammo: " + 
                                                  std::to_string(activeWeapon->currentAmmo) + "/" + 
@@ -2772,21 +2951,15 @@ int main() {
                     bullet.update(deltaTime);
                 }
                 
-                // Requirement 7.3: Check bullet-wall collisions using quadtree
-                if (clientGameMap.spatialIndex != nullptr) {
-                    for (auto& bullet : activeBullets) {
-                        // Query quadtree for walls near bullet (100x100 area around bullet)
-                        sf::FloatRect queryArea(bullet.x - 50.0f, bullet.y - 50.0f, 100.0f, 100.0f);
-                        std::vector<Wall*> nearbyWalls = clientGameMap.spatialIndex->query(queryArea);
-                        
-                        // Check collision with each nearby wall
-                        for (Wall* wall : nearbyWalls) {
-                            if (bullet.checkWallCollision(*wall)) {
-                                // Mark bullet for removal by setting range to 0
-                                bullet.range = 0.0f;
-                                break;
-                            }
-                        }
+                // Requirement 7.3: Check bullet-wall collisions with cell-based grid
+                // Bullets pass through wooden walls but stop at concrete walls
+                for (auto& bullet : activeBullets) {
+                    WallType hitWallType = bullet.checkCellWallCollision(grid, bullet.prevX, bullet.prevY);
+                    
+                    // Only stop bullet if it hit a concrete wall
+                    // Wooden walls are penetrable
+                    if (hitWallType == WallType::Concrete) {
+                        bullet.range = 0.0f;
                     }
                 }
                 
@@ -3146,6 +3319,23 @@ int main() {
                 20.0f
             );
             window.draw(weaponText);
+            
+            // Draw "Reloading..." text if weapon is reloading
+            if (activeWeapon != nullptr && activeWeapon->isReloading) {
+                sf::Text reloadingText;
+                reloadingText.setFont(font);
+                reloadingText.setString("Reloading...");
+                reloadingText.setCharacterSize(24);
+                reloadingText.setFillColor(sf::Color::Yellow);
+                
+                // Position below weapon info
+                sf::FloatRect reloadingBounds = reloadingText.getLocalBounds();
+                reloadingText.setPosition(
+                    windowSize.x - reloadingBounds.width - 20.0f - reloadingBounds.left,
+                    60.0f  // Below weapon text (20 + 28 + 12 spacing)
+                );
+                window.draw(reloadingText);
+            }
             
             // Update shop UI animation
             const float SHOP_ANIMATION_DURATION = 0.3f; // 300ms animation
