@@ -1698,6 +1698,63 @@ bool receiveMapFromServer(sf::TcpSocket& serverSocket, std::vector<std::vector<C
     return true;
 }
 
+// Receive shop positions from server via TCP
+// Parameters:
+//   serverSocket - TCP socket connected to the server
+//   shops - Vector to populate with received shops
+// Returns: true if successful, false if any error occurred
+//
+// PROTOCOL:
+// 1. Receive shop count as uint8_t (1 byte)
+// 2. For each shop, receive gridX and gridY as int32_t (8 bytes per shop)
+// 3. Calculate world coordinates from grid coordinates
+bool receiveShopsFromServer(sf::TcpSocket& serverSocket, std::vector<Shop>& shops) {
+    std::cout << "[INFO] Waiting to receive shops from server..." << std::endl;
+    
+    // Step 1: Receive shop count
+    uint8_t shopCount = 0;
+    std::size_t received = 0;
+    
+    sf::Socket::Status countStatus = serverSocket.receive(&shopCount, sizeof(shopCount), received);
+    if (countStatus != sf::Socket::Done) {
+        ErrorHandler::logTCPError("Receive shop count", countStatus, 
+                                 serverSocket.getRemoteAddress().toString());
+        return false;
+    }
+    
+    std::cout << "[INFO] Receiving " << static_cast<int>(shopCount) << " shops..." << std::endl;
+    
+    // Step 2: Receive each shop's data
+    shops.clear();
+    shops.reserve(shopCount);
+    
+    for (int i = 0; i < shopCount; ++i) {
+        struct ShopData {
+            int32_t gridX;
+            int32_t gridY;
+        } shopData;
+        
+        sf::Socket::Status shopStatus = serverSocket.receive(&shopData, sizeof(shopData), received);
+        if (shopStatus != sf::Socket::Done) {
+            ErrorHandler::logTCPError("Receive shop data", shopStatus, 
+                                     serverSocket.getRemoteAddress().toString());
+            return false;
+        }
+        
+        // Create shop and calculate world coordinates
+        Shop shop;
+        shop.gridX = shopData.gridX;
+        shop.gridY = shopData.gridY;
+        shop.worldX = shopData.gridX * CELL_SIZE + CELL_SIZE / 2.0f;
+        shop.worldY = shopData.gridY * CELL_SIZE + CELL_SIZE / 2.0f;
+        
+        shops.push_back(shop);
+    }
+    
+    std::cout << "[INFO] Shops received successfully: " << static_cast<int>(shopCount) << " shops" << std::endl;
+    return true;
+}
+
 // Function to perform TCP connection and handshake
 bool performTCPHandshake(const std::string& ip) {
     ErrorHandler::logInfo("=== Starting TCP Handshake ===");
@@ -1756,6 +1813,18 @@ bool performTCPHandshake(const std::string& ip) {
     }
     
     ErrorHandler::logInfo("Grid-based map received successfully from server");
+    
+    // Receive shop positions from server
+    ErrorHandler::logInfo("Waiting to receive shop positions from server...");
+    
+    if (!receiveShopsFromServer(*tcpSocket, shops)) {
+        connectionMessage = "Failed to receive shop data";
+        connectionMessageColor = sf::Color::Red;
+        tcpSocket.reset();
+        return false;
+    }
+    
+    ErrorHandler::logInfo("Shop positions received successfully from server");
     
     // Receive initial server position
     PositionPacket serverPosPacket;
@@ -2091,6 +2160,57 @@ sf::Color getPurchaseStatusColor(PurchaseStatus status) {
         default:
             return sf::Color::White;
     }
+}
+
+// ========================
+// Purchase Validation and Transaction Logic
+// ========================
+
+// Process weapon purchase request
+// Requirements: 4.1, 4.2, 4.3, 4.4, 4.5
+// Returns: true if purchase successful, false otherwise
+bool processPurchase(Player& player, Weapon::Type weaponType) {
+    // Create weapon to get price
+    Weapon* weapon = Weapon::create(weaponType);
+    
+    // Requirement 4.1: Validate player has sufficient money
+    if (player.money < weapon->price) {
+        std::cout << "[PURCHASE] Player has insufficient funds: " 
+                  << player.money << " < " << weapon->price << std::endl;
+        delete weapon;
+        return false;
+    }
+    
+    // Requirement 4.2: Validate player has empty inventory slot
+    if (!player.hasInventorySpace()) {
+        std::cout << "[PURCHASE] Player has full inventory" << std::endl;
+        delete weapon;
+        return false;
+    }
+    
+    // Get first empty slot
+    int emptySlot = player.getFirstEmptySlot();
+    if (emptySlot < 0) {
+        // This shouldn't happen if hasInventorySpace() returned true, but check anyway
+        std::cerr << "[ERROR] hasInventorySpace() returned true but getFirstEmptySlot() returned -1" << std::endl;
+        delete weapon;
+        return false;
+    }
+    
+    // Requirement 4.3: Deduct weapon price from player money
+    player.money -= weapon->price;
+    
+    // Requirement 4.4: Add weapon to first empty inventory slot
+    player.inventory[emptySlot] = weapon;
+    
+    // Requirement 4.5: Weapon is already initialized with full magazine and reserve ammo
+    // (This is done in Weapon::create())
+    
+    std::cout << "[PURCHASE] Player purchased " << weapon->name 
+              << " for $" << weapon->price << " in slot " << emptySlot 
+              << ". New balance: $" << player.money << std::endl;
+    
+    return true;
 }
 
 // Check if player is near any shop and render interaction prompt
@@ -2592,6 +2712,87 @@ int main() {
                     if (activeWeapon != nullptr) {
                         activeWeapon->startReload();
                         ErrorHandler::logInfo("Manual reload initiated for " + activeWeapon->name);
+                    }
+                }
+            }
+            
+            // Handle mouse button press for shop purchases
+            // Requirement 4: Handle weapon purchase in shop UI
+            if (event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Left && shopUIOpen) {
+                sf::Vector2i mousePixelPos = sf::Mouse::getPosition(window);
+                sf::Vector2u windowSize = window.getSize();
+                
+                // Shop UI dimensions (same as in renderShopUI)
+                const float UI_WIDTH = 1000.0f;
+                const float UI_HEIGHT = 700.0f;
+                const float UI_X = (windowSize.x - UI_WIDTH) / 2.0f;
+                const float UI_Y = (windowSize.y - UI_HEIGHT) / 2.0f;
+                
+                // Use current animation progress
+                float easedProgress = 1.0f - std::pow(1.0f - shopAnimationProgress, 3.0f);
+                float scale = 0.7f + easedProgress * 0.3f;
+                float scaledWidth = UI_WIDTH * scale;
+                float scaledHeight = UI_HEIGHT * scale;
+                float scaledX = UI_X + (UI_WIDTH - scaledWidth) / 2.0f;
+                float scaledY = UI_Y + (UI_HEIGHT - scaledHeight) / 2.0f;
+                
+                // Column dimensions
+                const float COLUMN_WIDTH = (scaledWidth - 80.0f * scale) / 3.0f;
+                const float COLUMN_HEIGHT = scaledHeight - 150.0f * scale;
+                const float COLUMN_Y = scaledY + 120.0f * scale;
+                const float COLUMN_PADDING = 20.0f * scale;
+                const float WEAPON_HEIGHT = 120.0f * scale;
+                const float WEAPON_PADDING = 10.0f * scale;
+                
+                // Define weapon categories (same as in renderShopUI)
+                struct WeaponCategory {
+                    std::string name;
+                    std::vector<Weapon::Type> weapons;
+                };
+                
+                std::vector<WeaponCategory> categories = {
+                    {"Pistols", {Weapon::USP, Weapon::GLOCK, Weapon::FIVESEVEN, Weapon::R8}},
+                    {"Rifles", {Weapon::GALIL, Weapon::M4, Weapon::AK47}},
+                    {"Snipers", {Weapon::M10, Weapon::AWP, Weapon::M40}}
+                };
+                
+                // Check each weapon panel for click
+                for (size_t col = 0; col < categories.size(); col++) {
+                    float columnX = scaledX + 20.0f * scale + col * (COLUMN_WIDTH + COLUMN_PADDING);
+                    float weaponY = COLUMN_Y + 50.0f * scale;
+                    
+                    for (Weapon::Type weaponType : categories[col].weapons) {
+                        // Check if click is within weapon panel bounds
+                        sf::FloatRect weaponBounds(
+                            columnX + 10.0f * scale,
+                            weaponY,
+                            COLUMN_WIDTH - 20.0f * scale,
+                            WEAPON_HEIGHT
+                        );
+                        
+                        if (weaponBounds.contains(static_cast<float>(mousePixelPos.x), static_cast<float>(mousePixelPos.y))) {
+                            // Weapon clicked! Attempt purchase
+                            Weapon* weapon = Weapon::create(weaponType);
+                            PurchaseStatus status = calculatePurchaseStatus(clientPlayer, weapon);
+                            
+                            if (status == PurchaseStatus::Purchasable) {
+                                // Process purchase locally
+                                bool success = processPurchase(clientPlayer, weaponType);
+                                
+                                if (success) {
+                                    ErrorHandler::logInfo("Client player purchased " + weapon->name);
+                                }
+                            } else if (status == PurchaseStatus::InsufficientFunds) {
+                                ErrorHandler::logInfo("Cannot purchase " + weapon->name + ": Insufficient funds (need $" + std::to_string(weapon->price) + ")");
+                            } else if (status == PurchaseStatus::InventoryFull) {
+                                ErrorHandler::logInfo("Cannot purchase " + weapon->name + ": Inventory full");
+                            }
+                            
+                            delete weapon;
+                            break;
+                        }
+                        
+                        weaponY += WEAPON_HEIGHT + WEAPON_PADDING;
                     }
                 }
             }

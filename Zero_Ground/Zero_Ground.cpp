@@ -2845,6 +2845,55 @@ bool sendMapToClient(sf::TcpSocket& clientSocket, const std::vector<std::vector<
     return true;
 }
 
+// Send shop positions to a connected client via TCP
+// Parameters:
+//   clientSocket - TCP socket connected to the client
+//   shops - Vector of shops to send
+// Returns: true if successful, false if any error occurred
+//
+// PROTOCOL:
+// 1. Send shop count as uint8_t (1 byte)
+// 2. For each shop, send gridX and gridY as int32_t (8 bytes per shop)
+//
+// ERROR HANDLING:
+// - Logs errors using ErrorHandler
+// - Returns false on any transmission error
+bool sendShopsToClient(sf::TcpSocket& clientSocket, const std::vector<Shop>& shops) {
+    std::cout << "[INFO] Preparing to send shops to client..." << std::endl;
+    
+    // Step 1: Send shop count
+    uint8_t shopCount = static_cast<uint8_t>(shops.size());
+    std::cout << "[INFO] Sending shop count: " << static_cast<int>(shopCount) << std::endl;
+    
+    sf::Socket::Status countStatus = clientSocket.send(&shopCount, sizeof(shopCount));
+    if (countStatus != sf::Socket::Done) {
+        ErrorHandler::logTCPError("Send shop count", countStatus, 
+                                 clientSocket.getRemoteAddress().toString());
+        return false;
+    }
+    
+    // Step 2: Send each shop's grid position
+    for (const auto& shop : shops) {
+        struct ShopData {
+            int32_t gridX;
+            int32_t gridY;
+        } shopData;
+        
+        shopData.gridX = shop.gridX;
+        shopData.gridY = shop.gridY;
+        
+        sf::Socket::Status shopStatus = clientSocket.send(&shopData, sizeof(shopData));
+        if (shopStatus != sf::Socket::Done) {
+            ErrorHandler::logTCPError("Send shop data", shopStatus, 
+                                     clientSocket.getRemoteAddress().toString());
+            return false;
+        }
+    }
+    
+    std::cout << "[INFO] Shops sent successfully: " << static_cast<int>(shopCount) << " shops" << std::endl;
+    return true;
+}
+
 // ========================
 // Thread-Safe Game State Manager
 // ========================
@@ -3295,6 +3344,13 @@ void tcpListenerThread(sf::TcpListener* listener, const std::vector<std::vector<
                     // Send cell-based map data using new serialization
                     if (sendMapToClient(*clientSocket, *grid)) {
                         ErrorHandler::logInfo("Successfully sent cell-based map to client");
+                        
+                        // Send shop positions to client
+                        if (!sendShopsToClient(*clientSocket, shops)) {
+                            ErrorHandler::logTCPError("Send shop positions", sf::Socket::Error, clientIP);
+                            return;
+                        }
+                        ErrorHandler::logInfo("Successfully sent shop positions to client");
                         
                         // Send initial player positions
                         // First send server player position
@@ -3875,6 +3931,87 @@ int main() {
                     if (activeWeapon != nullptr) {
                         activeWeapon->startReload();
                         ErrorHandler::logInfo("Manual reload initiated for " + activeWeapon->name);
+                    }
+                }
+            }
+            
+            // Handle mouse button press for shop purchases
+            // Requirement 4: Handle weapon purchase in shop UI
+            if (event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Left && shopUIOpen) {
+                sf::Vector2i mousePixelPos = sf::Mouse::getPosition(window);
+                sf::Vector2u windowSize = window.getSize();
+                
+                // Shop UI dimensions (same as in renderShopUI)
+                const float UI_WIDTH = 1000.0f;
+                const float UI_HEIGHT = 700.0f;
+                const float UI_X = (windowSize.x - UI_WIDTH) / 2.0f;
+                const float UI_Y = (windowSize.y - UI_HEIGHT) / 2.0f;
+                
+                // Use current animation progress
+                float easedProgress = 1.0f - std::pow(1.0f - shopAnimationProgress, 3.0f);
+                float scale = 0.7f + easedProgress * 0.3f;
+                float scaledWidth = UI_WIDTH * scale;
+                float scaledHeight = UI_HEIGHT * scale;
+                float scaledX = UI_X + (UI_WIDTH - scaledWidth) / 2.0f;
+                float scaledY = UI_Y + (UI_HEIGHT - scaledHeight) / 2.0f;
+                
+                // Column dimensions
+                const float COLUMN_WIDTH = (scaledWidth - 80.0f * scale) / 3.0f;
+                const float COLUMN_HEIGHT = scaledHeight - 150.0f * scale;
+                const float COLUMN_Y = scaledY + 120.0f * scale;
+                const float COLUMN_PADDING = 20.0f * scale;
+                const float WEAPON_HEIGHT = 120.0f * scale;
+                const float WEAPON_PADDING = 10.0f * scale;
+                
+                // Define weapon categories (same as in renderShopUI)
+                struct WeaponCategory {
+                    std::string name;
+                    std::vector<Weapon::Type> weapons;
+                };
+                
+                std::vector<WeaponCategory> categories = {
+                    {"Pistols", {Weapon::USP, Weapon::GLOCK, Weapon::FIVESEVEN, Weapon::R8}},
+                    {"Rifles", {Weapon::GALIL, Weapon::M4, Weapon::AK47}},
+                    {"Snipers", {Weapon::M10, Weapon::AWP, Weapon::M40}}
+                };
+                
+                // Check each weapon panel for click
+                for (size_t col = 0; col < categories.size(); col++) {
+                    float columnX = scaledX + 20.0f * scale + col * (COLUMN_WIDTH + COLUMN_PADDING);
+                    float weaponY = COLUMN_Y + 50.0f * scale;
+                    
+                    for (Weapon::Type weaponType : categories[col].weapons) {
+                        // Check if click is within weapon panel bounds
+                        sf::FloatRect weaponBounds(
+                            columnX + 10.0f * scale,
+                            weaponY,
+                            COLUMN_WIDTH - 20.0f * scale,
+                            WEAPON_HEIGHT
+                        );
+                        
+                        if (weaponBounds.contains(static_cast<float>(mousePixelPos.x), static_cast<float>(mousePixelPos.y))) {
+                            // Weapon clicked! Attempt purchase
+                            Weapon* weapon = Weapon::create(weaponType);
+                            PurchaseStatus status = calculatePurchaseStatus(serverPlayer, weapon);
+                            
+                            if (status == PurchaseStatus::Purchasable) {
+                                // Process purchase directly on server
+                                bool success = processPurchase(serverPlayer, weaponType);
+                                
+                                if (success) {
+                                    ErrorHandler::logInfo("Server player purchased " + weapon->name);
+                                }
+                            } else if (status == PurchaseStatus::InsufficientFunds) {
+                                ErrorHandler::logInfo("Cannot purchase " + weapon->name + ": Insufficient funds (need $" + std::to_string(weapon->price) + ")");
+                            } else if (status == PurchaseStatus::InventoryFull) {
+                                ErrorHandler::logInfo("Cannot purchase " + weapon->name + ": Inventory full");
+                            }
+                            
+                            delete weapon;
+                            break;
+                        }
+                        
+                        weaponY += WEAPON_HEIGHT + WEAPON_PADDING;
                     }
                 }
             }
