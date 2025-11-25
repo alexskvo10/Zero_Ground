@@ -2292,7 +2292,7 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
         
         // Draw weapons in this column
         float weaponY = COLUMN_Y + 50.0f * scale;
-        const float WEAPON_HEIGHT = 120.0f * scale;
+        const float WEAPON_HEIGHT = 110.0f * scale;
         const float WEAPON_PADDING = 10.0f * scale;
         
         for (Weapon::Type weaponType : categories[col].weapons) {
@@ -4094,7 +4094,7 @@ int main() {
                 const float COLUMN_HEIGHT = scaledHeight - 150.0f * scale;
                 const float COLUMN_Y = scaledY + 120.0f * scale;
                 const float COLUMN_PADDING = 20.0f * scale;
-                const float WEAPON_HEIGHT = 120.0f * scale;
+                const float WEAPON_HEIGHT = 110.0f * scale;
                 const float WEAPON_PADDING = 10.0f * scale;
                 
                 // Define weapon categories (same as in renderShopUI)
