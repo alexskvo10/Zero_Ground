@@ -2,6 +2,7 @@
 #include <SFML/Graphics.hpp>
 #include <iostream>
 #include <sstream>
+#include <iomanip>
 #include <thread>
 #include <mutex>
 #include <map>
@@ -2187,6 +2188,109 @@ bool processPurchase(Player& player, Weapon::Type weaponType) {
 // Shop UI Rendering System
 // ========================
 
+// Render weapon tooltip with full stats
+void renderWeaponTooltip(sf::RenderWindow& window, const Weapon* weapon, float mouseX, float mouseY, const sf::Font& font) {
+    sf::Vector2u windowSize = window.getSize();
+    
+    // Tooltip dimensions
+    const float TOOLTIP_WIDTH = 320.0f;  // Увеличено с 300 до 320 для лучшей читаемости
+    const float TOOLTIP_HEIGHT = 290.0f;  // Высота для всех характеристик
+    const float PADDING = 15.0f;
+    
+    // Position tooltip near mouse, but keep it on screen
+    // Reserve space for UI elements at bottom (150px for "Press B" and "E - inventory")
+    const float BOTTOM_UI_RESERVE = 150.0f;
+    
+    float tooltipX = mouseX + 20.0f;
+    float tooltipY = mouseY + 20.0f;
+    
+    // Adjust if tooltip goes off screen
+    if (tooltipX + TOOLTIP_WIDTH > windowSize.x - 10.0f) {
+        tooltipX = mouseX - TOOLTIP_WIDTH - 20.0f;
+    }
+    if (tooltipY + TOOLTIP_HEIGHT > windowSize.y - BOTTOM_UI_RESERVE) {
+        // Position above cursor if would overlap bottom UI
+        tooltipY = mouseY - TOOLTIP_HEIGHT - 20.0f;
+    }
+    if (tooltipX < 10.0f) tooltipX = 10.0f;
+    if (tooltipY < 10.0f) tooltipY = 10.0f;
+    
+    // Draw tooltip background
+    sf::RectangleShape tooltipBg(sf::Vector2f(TOOLTIP_WIDTH, TOOLTIP_HEIGHT));
+    tooltipBg.setPosition(tooltipX, tooltipY);
+    tooltipBg.setFillColor(sf::Color(20, 20, 20, 240));
+    tooltipBg.setOutlineColor(sf::Color(255, 215, 0));  // Gold border
+    tooltipBg.setOutlineThickness(2.0f);
+    window.draw(tooltipBg);
+    
+    float textY = tooltipY + PADDING;
+    
+    // Weapon name (title)
+    sf::Text nameText;
+    nameText.setFont(font);
+    nameText.setString(weapon->name);
+    nameText.setCharacterSize(24);
+    nameText.setFillColor(sf::Color(255, 215, 0));  // Gold
+    nameText.setStyle(sf::Text::Bold);
+    nameText.setPosition(tooltipX + PADDING, textY);
+    window.draw(nameText);
+    textY += 35.0f;
+    
+    // Price
+    sf::Text priceText;
+    priceText.setFont(font);
+    priceText.setString("Price: $" + std::to_string(weapon->price));
+    priceText.setCharacterSize(20);
+    priceText.setFillColor(sf::Color(100, 255, 100));  // Light green
+    priceText.setPosition(tooltipX + PADDING, textY);
+    window.draw(priceText);
+    textY += 30.0f;
+    
+    // Separator line
+    sf::RectangleShape separator(sf::Vector2f(TOOLTIP_WIDTH - 2 * PADDING, 1.0f));
+    separator.setPosition(tooltipX + PADDING, textY);
+    separator.setFillColor(sf::Color(100, 100, 100));
+    window.draw(separator);
+    textY += 10.0f;
+    
+    // Stats - format floats properly
+    std::ostringstream reloadStream, moveStream;
+    reloadStream << std::fixed << std::setprecision(1) << weapon->reloadTime;
+    moveStream << std::fixed << std::setprecision(1) << weapon->movementSpeed;
+    
+    std::vector<std::pair<std::string, std::string>> stats = {
+        {"Damage:", std::to_string(static_cast<int>(weapon->damage))},
+        {"Magazine:", std::to_string(weapon->magazineSize)},
+        {"Reserve Ammo:", std::to_string(weapon->reserveAmmo)},
+        {"Range:", std::to_string(static_cast<int>(weapon->range)) + " px"},
+        {"Bullet Speed:", std::to_string(static_cast<int>(weapon->bulletSpeed)) + " px/s"},
+        {"Reload Time:", reloadStream.str() + " s"},
+        {"Movement Speed:", moveStream.str()},
+        {"Fire Mode:", weapon->isAutomatic() ? "Automatic (" + std::to_string(static_cast<int>(weapon->fireRate)) + " rps)" : "Semi-Auto"}
+    };
+    
+    for (const auto& stat : stats) {
+        sf::Text statLabel;
+        statLabel.setFont(font);
+        statLabel.setString(stat.first);
+        statLabel.setCharacterSize(16);
+        statLabel.setFillColor(sf::Color(200, 200, 200));
+        statLabel.setPosition(tooltipX + PADDING, textY);
+        window.draw(statLabel);
+        
+        sf::Text statValue;
+        statValue.setFont(font);
+        statValue.setString(stat.second);
+        statValue.setCharacterSize(16);
+        statValue.setFillColor(sf::Color::White);
+        statValue.setStyle(sf::Text::Bold);
+        statValue.setPosition(tooltipX + PADDING + 150.0f, textY);
+        window.draw(statValue);
+        
+        textY += 22.0f;
+    }
+}
+
 // Render shop UI with three columns
 // Requirements: 3.2, 3.3, 3.4, 3.5
 void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font& font, float animationProgress) {
@@ -2264,6 +2368,11 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
         {"Rifles", {Weapon::GALIL, Weapon::M4, Weapon::AK47}},
         {"Snipers", {Weapon::M10, Weapon::AWP, Weapon::M40}}
     };
+    
+    // Variables to store hovered weapon for tooltip rendering at the end
+    Weapon* hoveredWeapon = nullptr;
+    float hoveredMouseX = 0.0f;
+    float hoveredMouseY = 0.0f;
     
     // Draw each column
     for (size_t col = 0; col < categories.size(); col++) {
@@ -2362,10 +2471,38 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
             statusText.setPosition(columnX + 15.0f * scale, weaponY + 90.0f * scale);
             window.draw(statusText);
             
-            weaponY += WEAPON_HEIGHT + WEAPON_PADDING;
+            // Check if mouse is hovering over this weapon slot
+            sf::Vector2i mousePixelPos = sf::Mouse::getPosition(window);
+            sf::FloatRect weaponBounds(
+                columnX + 10.0f * scale,
+                weaponY,
+                COLUMN_WIDTH - 20.0f * scale,
+                WEAPON_HEIGHT
+            );
             
-            delete weapon;
+            // If hovering, store weapon for tooltip rendering at the end
+            if (weaponBounds.contains(static_cast<float>(mousePixelPos.x), static_cast<float>(mousePixelPos.y))) {
+                // Delete previous hovered weapon if exists
+                if (hoveredWeapon != nullptr) {
+                    delete hoveredWeapon;
+                }
+                // Store this weapon for tooltip (don't delete it yet)
+                hoveredWeapon = weapon;
+                hoveredMouseX = static_cast<float>(mousePixelPos.x);
+                hoveredMouseY = static_cast<float>(mousePixelPos.y);
+            } else {
+                // Not hovering, delete weapon as usual
+                delete weapon;
+            }
+            
+            weaponY += WEAPON_HEIGHT + WEAPON_PADDING;
         }
+    }
+    
+    // Render tooltip at the very end to ensure it's on top of all other UI elements
+    if (hoveredWeapon != nullptr) {
+        renderWeaponTooltip(window, hoveredWeapon, hoveredMouseX, hoveredMouseY, font);
+        delete hoveredWeapon;  // Clean up after rendering
     }
 }
 

@@ -32,6 +32,7 @@ Zero Ground is a multiplayer 2D top-down shooter built with C++ and SFML 2.6.1. 
 - **Client-Server Architecture**: Authoritative server with UDP position synchronization
 - **Dynamic Map Generation**: Procedurally generated maps with BFS connectivity validation
 - **Fog of War**: Limited visibility system for strategic gameplay
+- **Weapon Shop System**: Purchase weapons with detailed tooltips showing full stats
 - **Optimized Performance**: Quadtree spatial partitioning for efficient collision detection
 - **Real-time Monitoring**: Comprehensive performance metrics and profiling
 
@@ -387,6 +388,8 @@ On the server:
 
 **Step 4: Play**
 - **Movement**: WASD keys
+- **Shop**: Press B near a shop (red square) to open weapon shop
+- **Weapon Tooltips**: Hover mouse over any weapon in shop to see detailed stats
 - **Fullscreen Toggle**: ESC key
 - **Reconnect**: If disconnected, press R on client
 
@@ -404,8 +407,18 @@ On the server:
 - S: Move down
 - A: Move left
 - D: Move right
+- B: Open/close weapon shop (when near a shop)
+- E: Open/close inventory
+- 1-4: Switch between weapon slots
+- Mouse: Aim and shoot
+- R: Reload weapon
 - ESC: Toggle fullscreen/windowed mode
 - R: Reconnect after connection loss
+
+**Weapon Shop:**
+- Hover mouse over any weapon to see detailed stats tooltip
+- Click on weapon to purchase (if you have enough money and inventory space)
+- Tooltip shows: damage, magazine size, reserve ammo, range, bullet speed, reload time, movement speed, fire mode
 
 ### Troubleshooting
 
@@ -510,11 +523,22 @@ If you'd like to contribute to addressing these limitations:
 
 ## Documentation
 
+### Performance and Testing
 - `tests/PERFORMANCE_TESTING_GUIDE.md` - Performance testing procedures
 - `tests/PERFORMANCE_TEST_RESULTS.md` - Performance analysis and results
 - `tests/INTEGRATION_TEST_SUMMARY.md` - Integration test documentation
 - `tests/TEST_EXECUTION_GUIDE.md` - Test execution instructions
+
+### Features
+- `WEAPON_TOOLTIP_FEATURE.md` - Weapon tooltip system documentation
+- `WEAPON_TOOLTIP_TESTING.md` - Tooltip testing guide
+- `WEAPON_TOOLTIP_VISUAL_GUIDE.txt` - Visual design reference
+- `ПОДСКАЗКИ_ОРУЖИЯ.md` - User guide in Russian
+- `CHANGELOG_WEAPON_TOOLTIP.md` - Tooltip feature changelog
+
+### Specifications
 - `.kiro/specs/zero-ground-multiplayer-shooter/` - Complete specification documents
   - `requirements.md` - Detailed requirements with acceptance criteria
   - `design.md` - Architecture and implementation design
   - `tasks.md` - Implementation task breakdown
+- `.kiro/specs/weapon-shop-system/` - Weapon shop system specifications
