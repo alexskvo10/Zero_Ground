@@ -593,6 +593,37 @@ struct DamageText {
     }
 };
 
+// Purchase notification text visualization
+struct PurchaseText {
+    float x = 0.0f;
+    float y = 0.0f;
+    std::string weaponName;
+    sf::Clock lifetime;
+    
+    // Check if purchase text should be removed (after 1.5 seconds)
+    bool shouldRemove() const {
+        return lifetime.getElapsedTime().asSeconds() >= 1.5f;
+    }
+    
+    // Get current Y position with upward animation
+    float getAnimatedY() const {
+        float elapsed = lifetime.getElapsedTime().asSeconds();
+        // Move upward 60 pixels over 1.5 seconds
+        return y - (elapsed * 40.0f);
+    }
+    
+    // Get alpha for fade-out effect
+    sf::Uint8 getAlpha() const {
+        float elapsed = lifetime.getElapsedTime().asSeconds();
+        // Fade out in last 0.5 seconds
+        if (elapsed > 1.0f) {
+            float fadeProgress = (elapsed - 1.0f) / 0.5f;
+            return static_cast<sf::Uint8>(255 * (1.0f - fadeProgress));
+        }
+        return 255;
+    }
+};
+
 // Forward declaration
 struct Quadtree;
 
@@ -1580,6 +1611,10 @@ std::mutex bulletsMutex;
 std::vector<DamageText> damageTexts;
 std::mutex damageTextsMutex;
 
+// Store active purchase notification texts
+std::vector<PurchaseText> purchaseTexts;
+std::mutex purchaseTextsMutex;
+
 // Client player with inventory and weapons
 Player clientPlayer;
 
@@ -2293,7 +2328,7 @@ bool processPurchase(Player& player, Weapon::Type weaponType) {
 // Check if player is near any shop and render interaction prompt
 // Requirement 3.1: Display prompt when player within 60 pixels
 void renderShopInteractionPrompt(sf::RenderWindow& window, sf::Vector2f playerPosition, 
-                                 const std::vector<Shop>& shops, const sf::Font& font) {
+                                 const std::vector<Shop>& shops, const sf::Font& font, bool shopUIOpen) {
     const float INTERACTION_RANGE = 60.0f;  // 60 pixels interaction range
     
     // Check if player is near any shop
@@ -2305,15 +2340,16 @@ void renderShopInteractionPrompt(sf::RenderWindow& window, sf::Vector2f playerPo
         }
     }
     
-    // Display prompt if near a shop
-    if (nearShop) {
+    // Display prompt based on shop state
+    if (nearShop || shopUIOpen) {
         // Get window size for UI positioning
         sf::Vector2u windowSize = window.getSize();
         
         // Create prompt text
         sf::Text promptText;
         promptText.setFont(font);
-        promptText.setString("Press B to purchase");
+        // Show different text based on shop state
+        promptText.setString(shopUIOpen ? "Press B to close" : "Press B to purchase");
         promptText.setCharacterSize(28);
         promptText.setFillColor(sf::Color::White);
         promptText.setOutlineColor(sf::Color::Black);
@@ -2514,19 +2550,6 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
             delete weapon;
         }
     }
-    
-    // Draw close instruction
-    sf::Text closeText;
-    closeText.setFont(font);
-    closeText.setString("Press B to close");
-    closeText.setCharacterSize(static_cast<unsigned int>(22 * scale));
-    closeText.setFillColor(sf::Color(200, 200, 200, static_cast<sf::Uint8>(easedProgress * 255)));
-    sf::FloatRect closeBounds = closeText.getLocalBounds();
-    closeText.setPosition(
-        scaledX + (scaledWidth - closeBounds.width) / 2.0f - closeBounds.left,
-        scaledY + scaledHeight - 40.0f * scale
-    );
-    window.draw(closeText);
 }
 
 bool isButtonClicked(const sf::RectangleShape& button, const sf::Event& event, const sf::RenderWindow& window) {
@@ -2858,6 +2881,16 @@ int main() {
                                 
                                 if (success) {
                                     ErrorHandler::logInfo("Client player purchased " + weapon->name);
+                                    
+                                    // Create purchase notification text
+                                    {
+                                        std::lock_guard<std::mutex> lock(purchaseTextsMutex);
+                                        PurchaseText purchaseText;
+                                        purchaseText.x = columnX + COLUMN_WIDTH / 2.0f;
+                                        purchaseText.y = weaponY + WEAPON_HEIGHT / 2.0f;
+                                        purchaseText.weaponName = weapon->name;
+                                        purchaseTexts.push_back(purchaseText);
+                                    }
                                 }
                             } else if (status == PurchaseStatus::InsufficientFunds) {
                                 ErrorHandler::logInfo("Cannot purchase " + weapon->name + ": Insufficient funds (need $" + std::to_string(weapon->price) + ")");
@@ -3286,6 +3319,18 @@ int main() {
                 );
             }
             
+            // Update and remove expired purchase notification texts
+            {
+                std::lock_guard<std::mutex> lock(purchaseTextsMutex);
+                purchaseTexts.erase(
+                    std::remove_if(purchaseTexts.begin(), purchaseTexts.end(),
+                        [](const PurchaseText& pt) {
+                            return pt.shouldRemove();
+                        }),
+                    purchaseTexts.end()
+                );
+            }
+            
             // Update interpolation alpha for smooth rendering
             interpolationAlpha += deltaTime * 10.0f; // Adjust multiplier for smoothness
             if (interpolationAlpha > 1.0f) interpolationAlpha = 1.0f;
@@ -3554,19 +3599,34 @@ int main() {
             // Draw shop UI with animation
             // Requirements: 3.2, 3.3, 3.4, 3.5
             if (shopAnimationProgress > 0.0f) {
-                // Get current player for purchase status calculation
-                Player currentPlayer;
-                {
-                    std::lock_guard<std::mutex> lock(mutex);
-                    // Create a temporary player with current state
-                    currentPlayer.money = 50000;  // TODO: Get actual player money from server
-                    currentPlayer.inventory[0] = nullptr;  // TODO: Get actual inventory from server
-                    currentPlayer.inventory[1] = nullptr;
-                    currentPlayer.inventory[2] = nullptr;
-                    currentPlayer.inventory[3] = nullptr;
-                }
+                // Use actual client player with real balance and inventory
+                renderShopUI(window, clientPlayer, font, shopAnimationProgress);
                 
-                renderShopUI(window, currentPlayer, font, shopAnimationProgress);
+                // Render purchase notification texts on top of shop UI
+                {
+                    std::lock_guard<std::mutex> lock(purchaseTextsMutex);
+                    
+                    for (const auto& purchaseText : purchaseTexts) {
+                        // Get animated position and alpha
+                        float animatedY = purchaseText.getAnimatedY();
+                        sf::Uint8 textAlpha = purchaseText.getAlpha();
+                        
+                        // Create "Purchased" text
+                        sf::Text text;
+                        text.setFont(font);
+                        text.setString("Purchased");
+                        text.setCharacterSize(28);
+                        text.setFillColor(sf::Color(0, 255, 0, textAlpha)); // Green with alpha
+                        text.setStyle(sf::Text::Bold);
+                        
+                        // Center text at purchase location
+                        sf::FloatRect textBounds = text.getLocalBounds();
+                        text.setOrigin(textBounds.width / 2.0f, textBounds.height / 2.0f);
+                        text.setPosition(purchaseText.x, animatedY);
+                        
+                        window.draw(text);
+                    }
+                }
             }
             
             // Draw inventory with animation
@@ -3711,7 +3771,7 @@ int main() {
             
             // Render shop interaction prompt if player is near a shop
             // Requirement 3.1: Display prompt when player within 60 pixels
-            renderShopInteractionPrompt(window, renderPos, shops, font);
+            renderShopInteractionPrompt(window, renderPos, shops, font, shopUIOpen);
             
             // Draw inventory hint at bottom center
             sf::Text inventoryHint;
