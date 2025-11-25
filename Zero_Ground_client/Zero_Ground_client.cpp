@@ -175,6 +175,7 @@ struct Weapon {
     float bulletSpeed;        // Pixels per second
     float reloadTime;         // Seconds
     float movementSpeed;      // Player speed modifier
+    float fireRate;           // Shots per second (for automatic weapons)
     sf::Clock lastShotTime;   // For fire rate limiting
     bool isReloading;
     sf::Clock reloadClock;
@@ -198,6 +199,7 @@ struct Weapon {
                 w->reloadTime = 2.0f;
                 w->movementSpeed = 2.5f;
                 w->reserveAmmo = 100;
+                w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case GLOCK:
                 w->name = "Glock-18";
@@ -209,6 +211,7 @@ struct Weapon {
                 w->reloadTime = 2.0f;
                 w->movementSpeed = 2.5f;
                 w->reserveAmmo = 120;
+                w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case FIVESEVEN:
                 w->name = "Five-SeveN";
@@ -220,6 +223,7 @@ struct Weapon {
                 w->reloadTime = 2.0f;
                 w->movementSpeed = 2.5f;
                 w->reserveAmmo = 100;
+                w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case R8:
                 w->name = "R8 Revolver";
@@ -231,6 +235,7 @@ struct Weapon {
                 w->reloadTime = 5.0f;
                 w->movementSpeed = 2.5f;
                 w->reserveAmmo = 40;
+                w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case GALIL:
                 w->name = "Galil AR";
@@ -242,6 +247,7 @@ struct Weapon {
                 w->reloadTime = 3.0f;
                 w->movementSpeed = 2.0f;
                 w->reserveAmmo = 140;
+                w->fireRate = 10.0f;  // 10 выстрелов в секунду
                 break;
             case M4:
                 w->name = "M4";
@@ -253,6 +259,7 @@ struct Weapon {
                 w->reloadTime = 3.0f;
                 w->movementSpeed = 1.8f;
                 w->reserveAmmo = 120;
+                w->fireRate = 10.0f;  // 10 выстрелов в секунду
                 break;
             case AK47:
                 w->name = "AK-47";
@@ -264,6 +271,7 @@ struct Weapon {
                 w->reloadTime = 3.0f;
                 w->movementSpeed = 1.6f;
                 w->reserveAmmo = 100;
+                w->fireRate = 10.0f;  // 10 выстрелов в секунду
                 break;
             case M10:
                 w->name = "M10";
@@ -275,6 +283,7 @@ struct Weapon {
                 w->reloadTime = 4.0f;
                 w->movementSpeed = 1.1f;
                 w->reserveAmmo = 25;
+                w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case AWP:
                 w->name = "AWP";
@@ -286,6 +295,7 @@ struct Weapon {
                 w->reloadTime = 1.5f;
                 w->movementSpeed = 1.0f;
                 w->reserveAmmo = 10;
+                w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case M40:
                 w->name = "M40";
@@ -297,6 +307,7 @@ struct Weapon {
                 w->reloadTime = 1.5f;
                 w->movementSpeed = 1.2f;
                 w->reserveAmmo = 10;
+                w->fireRate = 0.0f;  // Не автоматическое
                 break;
         }
         
@@ -308,6 +319,17 @@ struct Weapon {
     
     bool canFire() const {
         return !isReloading && currentAmmo > 0;
+    }
+    
+    bool isAutomatic() const {
+        return fireRate > 0.0f;
+    }
+    
+    bool canFireAutomatic() const {
+        if (!canFire() || !isAutomatic()) return false;
+        float timeSinceLastShot = lastShotTime.getElapsedTime().asSeconds();
+        float fireInterval = 1.0f / fireRate;
+        return timeSinceLastShot >= fireInterval;
     }
     
     void startReload() {
@@ -2067,6 +2089,61 @@ void udpThread(std::unique_ptr<sf::UdpSocket> socket, const std::string& ip) {
 }
 
 // ========================
+// Weapon Firing System
+// ========================
+
+// Fire weapon and send shot packet to server
+void fireWeapon(Player& player, const sf::RenderWindow& window, const std::string& serverIP) {
+    Weapon* activeWeapon = player.getActiveWeapon();
+    if (activeWeapon == nullptr || !activeWeapon->canFire()) {
+        return;
+    }
+    
+    // Get mouse position in world coordinates
+    sf::Vector2i mousePixelPos = sf::Mouse::getPosition(window);
+    sf::Vector2f mouseWorldPos = window.mapPixelToCoords(mousePixelPos);
+    
+    // Calculate bullet trajectory
+    float dx = mouseWorldPos.x - player.x;
+    float dy = mouseWorldPos.y - player.y;
+    float distance = std::sqrt(dx * dx + dy * dy);
+    
+    if (distance > 0.001f) {  // Avoid division by zero
+        // Normalize direction
+        dx /= distance;
+        dy /= distance;
+        
+        // Fire weapon (consumes ammo)
+        activeWeapon->fire();
+        
+        // Send shot packet to server
+        ShotPacket shotPacket;
+        shotPacket.playerId = 0; // Client is player 0
+        shotPacket.x = player.x;
+        shotPacket.y = player.y;
+        shotPacket.dirX = dx;
+        shotPacket.dirY = dy;
+        shotPacket.weaponType = static_cast<uint8_t>(activeWeapon->type);
+        shotPacket.bulletSpeed = activeWeapon->bulletSpeed;
+        shotPacket.damage = activeWeapon->damage;
+        shotPacket.range = activeWeapon->range;
+        
+        // Create temporary UDP socket for sending shot
+        sf::UdpSocket shotSocket;
+        sf::Socket::Status shotStatus = shotSocket.send(&shotPacket, sizeof(ShotPacket), sf::IpAddress(serverIP), 53001);
+        if (shotStatus == sf::Socket::Done) {
+            ErrorHandler::logInfo("Shot packet sent to server");
+        } else {
+            ErrorHandler::logUDPError("Send shot packet", "Failed to send to server");
+        }
+        
+        ErrorHandler::logInfo("Fired " + activeWeapon->name + " - Ammo: " + 
+                             std::to_string(activeWeapon->currentAmmo) + "/" + 
+                             std::to_string(activeWeapon->reserveAmmo));
+    }
+}
+
+// ========================
 // Shop Rendering System
 // ========================
 
@@ -2805,70 +2882,11 @@ int main() {
                     ErrorHandler::logInfo("Cannot fire: No active weapon. Active slot: " + std::to_string(clientPlayer.activeSlot));
                 }
                 if (activeWeapon != nullptr && !shopUIOpen && !inventoryOpen) {
-                    // Check if weapon can fire
-                    if (activeWeapon->canFire()) {
-                        // Get mouse position in world coordinates
-                        sf::Vector2i mousePixelPos = sf::Mouse::getPosition(window);
-                        sf::Vector2f mouseWorldPos = window.mapPixelToCoords(mousePixelPos);
-                        
-                        // Calculate bullet trajectory
-                        float dx = mouseWorldPos.x - clientPos.x;
-                        float dy = mouseWorldPos.y - clientPos.y;
-                        float distance = std::sqrt(dx * dx + dy * dy);
-                        
-                        if (distance > 0.001f) {  // Avoid division by zero
-                            // Normalize direction
-                            dx /= distance;
-                            dy /= distance;
-                            
-                            // Create bullet
-                            Bullet bullet;
-                            bullet.ownerId = 0;  // Client player ID
-                            bullet.x = clientPos.x;
-                            bullet.y = clientPos.y;
-                            bullet.prevX = clientPos.x;  // Initialize previous position
-                            bullet.prevY = clientPos.y;
-                            bullet.vx = dx * activeWeapon->bulletSpeed;
-                            bullet.vy = dy * activeWeapon->bulletSpeed;
-                            bullet.damage = activeWeapon->damage;
-                            bullet.range = activeWeapon->range;
-                            bullet.maxRange = activeWeapon->range;
-                            bullet.weaponType = activeWeapon->type;
-                            
-                            // Fire weapon (consumes ammo)
-                            activeWeapon->fire();
-                            
-                            // NOTE: Don't create bullet locally - wait for server to send it back
-                            // This prevents duplicate bullets (local + server response)
-                            
-                            // Send shot packet to server
-                            ShotPacket shotPacket;
-                            shotPacket.playerId = 0; // Client is player 0
-                            shotPacket.x = clientPos.x;
-                            shotPacket.y = clientPos.y;
-                            shotPacket.dirX = dx;
-                            shotPacket.dirY = dy;
-                            shotPacket.weaponType = static_cast<uint8_t>(activeWeapon->type);
-                            shotPacket.bulletSpeed = activeWeapon->bulletSpeed;
-                            shotPacket.damage = activeWeapon->damage;
-                            shotPacket.range = activeWeapon->range;
-                            
-                            // Create temporary UDP socket for sending shot
-                            sf::UdpSocket shotSocket;
-                            sf::Socket::Status shotStatus = shotSocket.send(&shotPacket, sizeof(ShotPacket), sf::IpAddress(serverIP), 53001);
-                            if (shotStatus == sf::Socket::Done) {
-                                ErrorHandler::logInfo("Shot packet sent to server");
-                            } else {
-                                ErrorHandler::logUDPError("Send shot packet", "Failed to send to server");
-                            }
-                            
-                            ErrorHandler::logInfo("Fired " + activeWeapon->name + " - Ammo: " + 
-                                                 std::to_string(activeWeapon->currentAmmo) + "/" + 
-                                                 std::to_string(activeWeapon->reserveAmmo));
-                        }
-                    }
+                    // Fire weapon (works for both automatic and semi-automatic)
+                    fireWeapon(clientPlayer, window, serverIP);
+                    
                     // Requirement 6.2: Trigger automatic reload when magazine empty
-                    else if (activeWeapon->currentAmmo == 0 && activeWeapon->reserveAmmo > 0) {
+                    if (activeWeapon->currentAmmo == 0 && activeWeapon->reserveAmmo > 0) {
                         activeWeapon->startReload();
                         ErrorHandler::logInfo("Automatic reload triggered for " + activeWeapon->name);
                     }
@@ -3147,6 +3165,9 @@ int main() {
                     std::lock_guard<std::mutex> lock(mutex);
                     clientPos.x = newPos.x;
                     clientPos.y = newPos.y;
+                    // Update player position for weapon firing
+                    clientPlayer.x = newPos.x;
+                    clientPlayer.y = newPos.y;
                 }
             }
             
@@ -3156,6 +3177,27 @@ int main() {
                 Weapon* activeWeapon = clientPlayer.getActiveWeapon();
                 if (activeWeapon != nullptr) {
                     activeWeapon->updateReload(deltaTime);
+                }
+            }
+            
+            // Handle automatic fire when LMB is held down
+            // Only for automatic weapons (Galil, M4, AK47)
+            if (window.hasFocus() && !shopUIOpen && !inventoryOpen) {
+                Weapon* activeWeapon = clientPlayer.getActiveWeapon();
+                if (activeWeapon != nullptr && activeWeapon->isAutomatic()) {
+                    // Check if left mouse button is held down
+                    if (sf::Mouse::isButtonPressed(sf::Mouse::Left)) {
+                        // Check if enough time has passed since last shot (fire rate control)
+                        if (activeWeapon->canFireAutomatic()) {
+                            fireWeapon(clientPlayer, window, serverIP);
+                            
+                            // Trigger automatic reload when magazine empty
+                            if (activeWeapon->currentAmmo == 0 && activeWeapon->reserveAmmo > 0) {
+                                activeWeapon->startReload();
+                                ErrorHandler::logInfo("Automatic reload triggered for " + activeWeapon->name);
+                            }
+                        }
+                    }
                 }
             }
             

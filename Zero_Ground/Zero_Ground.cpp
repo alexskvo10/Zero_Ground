@@ -129,6 +129,7 @@ struct Weapon {
     float bulletSpeed;        // Pixels per second
     float reloadTime;         // Seconds
     float movementSpeed;      // Player speed modifier
+    float fireRate;           // Shots per second (for automatic weapons)
     sf::Clock lastShotTime;   // For fire rate limiting
     bool isReloading;
     sf::Clock reloadClock;
@@ -152,6 +153,7 @@ struct Weapon {
                 w->reloadTime = 2.0f;
                 w->movementSpeed = 2.5f;
                 w->reserveAmmo = 100;
+                w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case GLOCK:
                 w->name = "Glock-18";
@@ -163,6 +165,7 @@ struct Weapon {
                 w->reloadTime = 2.0f;
                 w->movementSpeed = 2.5f;
                 w->reserveAmmo = 120;
+                w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case FIVESEVEN:
                 w->name = "Five-SeveN";
@@ -174,6 +177,7 @@ struct Weapon {
                 w->reloadTime = 2.0f;
                 w->movementSpeed = 2.5f;
                 w->reserveAmmo = 100;
+                w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case R8:
                 w->name = "R8 Revolver";
@@ -185,6 +189,7 @@ struct Weapon {
                 w->reloadTime = 5.0f;
                 w->movementSpeed = 2.5f;
                 w->reserveAmmo = 40;
+                w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case GALIL:
                 w->name = "Galil AR";
@@ -196,6 +201,7 @@ struct Weapon {
                 w->reloadTime = 3.0f;
                 w->movementSpeed = 2.0f;
                 w->reserveAmmo = 140;
+                w->fireRate = 10.0f;  // 10 выстрелов в секунду
                 break;
             case M4:
                 w->name = "M4";
@@ -207,6 +213,7 @@ struct Weapon {
                 w->reloadTime = 3.0f;
                 w->movementSpeed = 1.8f;
                 w->reserveAmmo = 120;
+                w->fireRate = 10.0f;  // 10 выстрелов в секунду
                 break;
             case AK47:
                 w->name = "AK-47";
@@ -218,6 +225,7 @@ struct Weapon {
                 w->reloadTime = 3.0f;
                 w->movementSpeed = 1.6f;
                 w->reserveAmmo = 100;
+                w->fireRate = 10.0f;  // 10 выстрелов в секунду
                 break;
             case M10:
                 w->name = "M10";
@@ -229,6 +237,7 @@ struct Weapon {
                 w->reloadTime = 4.0f;
                 w->movementSpeed = 1.1f;
                 w->reserveAmmo = 25;
+                w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case AWP:
                 w->name = "AWP";
@@ -240,6 +249,7 @@ struct Weapon {
                 w->reloadTime = 1.5f;
                 w->movementSpeed = 1.0f;
                 w->reserveAmmo = 10;
+                w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case M40:
                 w->name = "M40";
@@ -251,6 +261,7 @@ struct Weapon {
                 w->reloadTime = 1.5f;
                 w->movementSpeed = 1.2f;
                 w->reserveAmmo = 10;
+                w->fireRate = 0.0f;  // Не автоматическое
                 break;
         }
         
@@ -262,6 +273,17 @@ struct Weapon {
     
     bool canFire() const {
         return !isReloading && currentAmmo > 0;
+    }
+    
+    bool isAutomatic() const {
+        return fireRate > 0.0f;
+    }
+    
+    bool canFireAutomatic() const {
+        if (!canFire() || !isAutomatic()) return false;
+        float timeSinceLastShot = lastShotTime.getElapsedTime().asSeconds();
+        float fireInterval = 1.0f / fireRate;
+        return timeSinceLastShot >= fireInterval;
     }
     
     void startReload() {
@@ -3193,6 +3215,95 @@ std::string connectionStatus = "Waiting for player..."; // Waiting for player...
 sf::Color connectionStatusColor = sf::Color::White;
 bool showPlayButton = false;
 
+// ========================
+// Weapon Firing System (Server)
+// ========================
+
+// Fire weapon and send shot packet to all clients
+void fireWeaponServer(Player& player, const sf::RenderWindow& window, sf::UdpSocket& udpSocket, 
+                      std::vector<Bullet>& activeBullets, std::mutex& bulletsMutex) {
+    Weapon* activeWeapon = player.getActiveWeapon();
+    if (activeWeapon == nullptr || !activeWeapon->canFire()) {
+        return;
+    }
+    
+    // Get mouse position in world coordinates
+    sf::Vector2i mousePixelPos = sf::Mouse::getPosition(window);
+    sf::Vector2f mouseWorldPos = window.mapPixelToCoords(mousePixelPos);
+    
+    // Calculate bullet trajectory
+    float dx = mouseWorldPos.x - player.x;
+    float dy = mouseWorldPos.y - player.y;
+    float distance = std::sqrt(dx * dx + dy * dy);
+    
+    if (distance > 0.001f) {  // Avoid division by zero
+        // Normalize direction
+        dx /= distance;
+        dy /= distance;
+        
+        // Create bullet
+        Bullet bullet;
+        bullet.ownerId = 1;  // Server player ID (1 for server, 0 for clients)
+        bullet.x = player.x;
+        bullet.y = player.y;
+        bullet.prevX = player.x;  // Initialize previous position
+        bullet.prevY = player.y;
+        bullet.vx = dx * activeWeapon->bulletSpeed;
+        bullet.vy = dy * activeWeapon->bulletSpeed;
+        bullet.damage = activeWeapon->damage;
+        bullet.range = activeWeapon->range;
+        bullet.maxRange = activeWeapon->range;
+        bullet.weaponType = activeWeapon->type;
+        
+        // Fire weapon (consumes ammo)
+        activeWeapon->fire();
+        
+        // Add bullet to active bullets list
+        {
+            std::lock_guard<std::mutex> lock(bulletsMutex);
+            
+            // Count bullets owned by this player
+            int playerBulletCount = 0;
+            for (const auto& b : activeBullets) {
+                if (b.ownerId == 1) playerBulletCount++;
+            }
+            
+            // Only add if under limit
+            if (playerBulletCount < 20) {
+                activeBullets.push_back(bullet);
+                ErrorHandler::logInfo("Bullet created! Total bullets: " + std::to_string(activeBullets.size()));
+            } else {
+                ErrorHandler::logInfo("Bullet limit reached (20)");
+            }
+        }
+        
+        // Send shot packet to all clients
+        ShotPacket shotPacket;
+        shotPacket.playerId = 1;  // Server player ID
+        shotPacket.x = player.x;
+        shotPacket.y = player.y;
+        shotPacket.dirX = dx;
+        shotPacket.dirY = dy;
+        shotPacket.weaponType = static_cast<uint8_t>(activeWeapon->type);
+        shotPacket.bulletSpeed = activeWeapon->bulletSpeed;
+        shotPacket.damage = activeWeapon->damage;
+        shotPacket.range = activeWeapon->range;
+        
+        {
+            std::lock_guard<std::mutex> lock(clientsMutex);
+            for (const auto& client : connectedClients) {
+                if (client.socket && client.isReady) {
+                    udpSocket.send(&shotPacket, sizeof(ShotPacket), client.address, 53002);
+                }
+            }
+        }
+        
+        ErrorHandler::logInfo("Fired " + activeWeapon->name + " - Ammo: " + 
+                             std::to_string(activeWeapon->currentAmmo) + "/" + 
+                             std::to_string(activeWeapon->reserveAmmo));
+    }
+}
+
 // Thread to handle ready status from connected clients
 void readyListenerThread() {
     ErrorHandler::logInfo("Ready listener thread started");
@@ -4024,87 +4135,11 @@ int main() {
                     ErrorHandler::logInfo("Cannot fire: No active weapon. Active slot: " + std::to_string(serverPlayer.activeSlot));
                 }
                 if (activeWeapon != nullptr && !shopUIOpen && !inventoryOpen) {
-                    // Check if weapon can fire
-                    if (activeWeapon->canFire()) {
-                        // Get mouse position in world coordinates
-                        sf::Vector2i mousePixelPos = sf::Mouse::getPosition(window);
-                        sf::Vector2f mouseWorldPos = window.mapPixelToCoords(mousePixelPos);
-                        
-                        // Calculate bullet trajectory
-                        float dx = mouseWorldPos.x - serverPos.x;
-                        float dy = mouseWorldPos.y - serverPos.y;
-                        float distance = std::sqrt(dx * dx + dy * dy);
-                        
-                        if (distance > 0.001f) {  // Avoid division by zero
-                            // Normalize direction
-                            dx /= distance;
-                            dy /= distance;
-                            
-                            // Create bullet
-                            Bullet bullet;
-                            bullet.ownerId = 1;  // Server player ID (1 for server, 0 for clients)
-                            bullet.x = serverPos.x;
-                            bullet.y = serverPos.y;
-                            bullet.prevX = serverPos.x;  // Initialize previous position
-                            bullet.prevY = serverPos.y;
-                            bullet.vx = dx * activeWeapon->bulletSpeed;
-                            bullet.vy = dy * activeWeapon->bulletSpeed;
-                            bullet.damage = activeWeapon->damage;
-                            bullet.range = activeWeapon->range;
-                            bullet.maxRange = activeWeapon->range;
-                            bullet.weaponType = activeWeapon->type;
-                            
-                            // Fire weapon (consumes ammo)
-                            activeWeapon->fire();
-                            
-                            // Requirement 7.1: Add bullet to active bullets list
-                            // Requirement 10.3: Ensure maximum 20 active bullets per player
-                            {
-                                std::lock_guard<std::mutex> lock(bulletsMutex);
-                                
-                                // Count bullets owned by this player
-                                int playerBulletCount = 0;
-                                for (const auto& b : activeBullets) {
-                                    if (b.ownerId == 0) playerBulletCount++;
-                                }
-                                
-                                // Only add if under limit
-                                if (playerBulletCount < 20) {
-                                    activeBullets.push_back(bullet);
-                                    ErrorHandler::logInfo("Bullet created! Total bullets: " + std::to_string(activeBullets.size()));
-                                } else {
-                                    ErrorHandler::logInfo("Bullet limit reached (20)");
-                                }
-                            }
-                            
-                            // Send shot packet to all clients
-                            ShotPacket shotPacket;
-                            shotPacket.playerId = 1;  // Server player ID
-                            shotPacket.x = serverPos.x;
-                            shotPacket.y = serverPos.y;
-                            shotPacket.dirX = dx;
-                            shotPacket.dirY = dy;
-                            shotPacket.weaponType = static_cast<uint8_t>(activeWeapon->type);
-                            shotPacket.bulletSpeed = activeWeapon->bulletSpeed;
-                            shotPacket.damage = activeWeapon->damage;
-                            shotPacket.range = activeWeapon->range;
-                            
-                            {
-                                std::lock_guard<std::mutex> lock(clientsMutex);
-                                for (const auto& client : connectedClients) {
-                                    if (client.socket && client.isReady) {
-                                        udpSocket.send(&shotPacket, sizeof(ShotPacket), client.address, 53002);
-                                    }
-                                }
-                            }
-                            
-                            ErrorHandler::logInfo("Fired " + activeWeapon->name + " - Ammo: " + 
-                                                 std::to_string(activeWeapon->currentAmmo) + "/" + 
-                                                 std::to_string(activeWeapon->reserveAmmo));
-                        }
-                    }
+                    // Fire weapon (works for both automatic and semi-automatic)
+                    fireWeaponServer(serverPlayer, window, udpSocket, activeBullets, bulletsMutex);
+                    
                     // Requirement 6.2: Trigger automatic reload when magazine empty
-                    else if (activeWeapon->currentAmmo == 0 && activeWeapon->reserveAmmo > 0) {
+                    if (activeWeapon->currentAmmo == 0 && activeWeapon->reserveAmmo > 0) {
                         activeWeapon->startReload();
                         ErrorHandler::logInfo("Automatic reload triggered for " + activeWeapon->name);
                     }
@@ -4207,6 +4242,27 @@ int main() {
             Weapon* activeWeapon = serverPlayer.getActiveWeapon();
             if (activeWeapon != nullptr) {
                 activeWeapon->updateReload(deltaTime);
+            }
+            
+            // Handle automatic fire when LMB is held down
+            // Only for automatic weapons (Galil, M4, AK47)
+            if (window.hasFocus() && !shopUIOpen && !inventoryOpen) {
+                Weapon* activeWeapon = serverPlayer.getActiveWeapon();
+                if (activeWeapon != nullptr && activeWeapon->isAutomatic()) {
+                    // Check if left mouse button is held down
+                    if (sf::Mouse::isButtonPressed(sf::Mouse::Left)) {
+                        // Check if enough time has passed since last shot (fire rate control)
+                        if (activeWeapon->canFireAutomatic()) {
+                            fireWeaponServer(serverPlayer, window, udpSocket, activeBullets, bulletsMutex);
+                            
+                            // Trigger automatic reload when magazine empty
+                            if (activeWeapon->currentAmmo == 0 && activeWeapon->reserveAmmo > 0) {
+                                activeWeapon->startReload();
+                                ErrorHandler::logInfo("Automatic reload triggered for " + activeWeapon->name);
+                            }
+                        }
+                    }
+                }
             }
             
             // Requirement 7.2: Update bullet positions
@@ -4602,6 +4658,9 @@ int main() {
                 
                 serverPos.x = newPos.x;
                 serverPos.y = newPos.y;
+                // Update player position for weapon firing
+                serverPlayer.x = newPos.x;
+                serverPlayer.y = newPos.y;
             }
             
             // Update interpolation alpha for smooth rendering
