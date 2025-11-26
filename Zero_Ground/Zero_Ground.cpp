@@ -4091,6 +4091,13 @@ int main() {
         return -1;
     }
     
+    // Load bullet texture
+    sf::Texture bulletTexture;
+    if (!bulletTexture.loadFromFile("Bullet.png")) {
+        std::cerr << "Failed to load bullet texture Bullet.png!" << std::endl;
+        return -1;
+    }
+    
     // Create server player sprite
     sf::Sprite serverSprite;
     serverSprite.setTexture(playerTexture);
@@ -4988,9 +4995,17 @@ int main() {
                 }
             }
             
-            // Requirement 7.1: Render bullets as white lines (5px length, 2px width)
+            // Requirement 7.1: Render bullets as sprites with texture
             {
                 std::lock_guard<std::mutex> lock(bulletsMutex);
+                
+                // Create bullet sprite (reused for all bullets)
+                sf::Sprite bulletSprite;
+                bulletSprite.setTexture(bulletTexture);
+                
+                // Get texture size and set origin to center
+                sf::Vector2u bulletTexSize = bulletTexture.getSize();
+                bulletSprite.setOrigin(bulletTexSize.x / 2.0f, bulletTexSize.y / 2.0f);
                 
                 for (const auto& bullet : activeBullets) {
                     // Calculate distance for fog
@@ -5003,18 +5018,20 @@ int main() {
                     
                     // Only draw if visible
                     if (alpha > 0) {
-                        // Calculate bullet direction for line rendering
+                        // Calculate bullet direction and rotation
                         float speed = std::sqrt(bullet.vx * bullet.vx + bullet.vy * bullet.vy);
                         float dirX = (speed > 0.001f) ? bullet.vx / speed : 1.0f;
                         float dirY = (speed > 0.001f) ? bullet.vy / speed : 0.0f;
                         
-                        // Create line from bullet position extending 5px in direction of travel
-                        sf::Vertex line[] = {
-                            sf::Vertex(sf::Vector2f(bullet.x, bullet.y), sf::Color(255, 255, 255, alpha)),
-                            sf::Vertex(sf::Vector2f(bullet.x + dirX * 5.0f, bullet.y + dirY * 5.0f), sf::Color(255, 255, 255, alpha))
-                        };
+                        // Calculate rotation angle (bullet points in direction of travel)
+                        float angle = std::atan2(dirY, dirX) * 180.0f / 3.14159f;
                         
-                        window.draw(line, 2, sf::Lines);
+                        // Apply fog, position and rotation to bullet sprite
+                        bulletSprite.setColor(sf::Color(255, 255, 255, alpha));
+                        bulletSprite.setPosition(bullet.x, bullet.y);
+                        bulletSprite.setRotation(angle);
+                        
+                        window.draw(bulletSprite);
                     }
                 }
             }
@@ -5062,6 +5079,17 @@ int main() {
             }
             
             // Draw server player sprite - always visible
+            // Calculate rotation angle to mouse cursor
+            sf::Vector2i mousePixelPos = sf::Mouse::getPosition(window);
+            sf::Vector2f mouseWorldPos = window.mapPixelToCoords(mousePixelPos);
+            
+            // Calculate angle from player to mouse (in degrees)
+            float dx = mouseWorldPos.x - renderPos.x;
+            float dy = mouseWorldPos.y - renderPos.y;
+            float angleToMouse = std::atan2(dy, dx) * 180.0f / 3.14159f;
+            
+            // Rotate sprite to face mouse (subtract 90 degrees because sprite initially faces up)
+            serverSprite.setRotation(angleToMouse - 90.0f);
             serverSprite.setPosition(renderPos.x, renderPos.y);
             window.draw(serverSprite);
             
