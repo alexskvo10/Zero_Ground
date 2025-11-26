@@ -3734,7 +3734,9 @@ void udpListenerThread(sf::UdpSocket* socket, PerformanceMonitor* perfMonitor) {
                     gameState.updatePlayerPosition(receivedPacket->playerId, receivedPacket->x, receivedPacket->y);
                     
                     // Update client position with interpolation support
-                    {
+                    // IMPORTANT: Only update if client is alive or not waiting for respawn
+                    // This prevents client from overwriting server-assigned respawn position
+                    if (clientIsAlive && !clientWaitingRespawn) {
                         std::lock_guard<std::mutex> lock(mutex);
                         
                         // Store previous position for interpolation
@@ -4515,13 +4517,13 @@ int main() {
                                                      ", " + std::to_string(damageText.y) + ")");
                             }
                             
-                            // Requirement 8.3: Check for player death
+                            // NEW DEATH SYSTEM: Check for player death
                             bool wasKill = false;
                             if (serverHealth <= 0.0f) {
                                 ErrorHandler::logInfo("!!! SERVER PLAYER DEATH TRIGGERED !!! Health: " + std::to_string(serverHealth));
                                 serverIsAlive = false;
                                 serverWaitingRespawn = true;
-                                serverRespawnTimer.restart();
+                                serverRespawnTimer.restart(); // Start 5 second respawn timer
                                 wasKill = true;
                                 
                                 // Requirement 8.4: Award $5000 to eliminating player
@@ -4667,13 +4669,13 @@ int main() {
                                 damageTexts.push_back(damageText);
                             }
                             
-                            // Check if client died
+                            // NEW DEATH SYSTEM: Check if client died
                             bool wasKill = false;
                             if (clientHealth <= 0.0f && clientIsAlive) {
                                 clientIsAlive = false;
                                 clientWaitingRespawn = true;
+                                clientRespawnTimer.restart(); // Start 5 second respawn timer
                                 wasKill = true;
-                                clientRespawnTimer.restart();
                                 
                                 // Server gets kill reward
                                 serverPlayer.money += 5000;
@@ -4755,45 +4757,117 @@ int main() {
                 );
             }
             
-            // Requirement 8.4, 8.5: Handle respawn after 5 seconds
+            // NEW DEATH SYSTEM: Handle respawn with 5 second delay
             if (serverWaitingRespawn) {
-                float respawnTime = serverRespawnTimer.getElapsedTime().asSeconds();
-                if (respawnTime >= 5.0f) {
-                    // Requirement 8.5: Restore health to 100 HP on respawn
-                    ErrorHandler::logInfo("!!! SERVER PLAYER RESPAWNING !!! Time: " + std::to_string(respawnTime));
+                // Check if 5 seconds have passed since death
+                if (serverRespawnTimer.getElapsedTime().asSeconds() >= 5.0f) {
+                    // Respawn after 5 second delay
+                    ErrorHandler::logInfo("!!! SERVER PLAYER RESPAWNING !!!");
                     serverHealth = 100.0f;
                     serverIsAlive = true;
                     serverWaitingRespawn = false;
+                
+                // Generate random respawn position at least 1000 pixels away from client
+                std::random_device rd;
+                std::mt19937 gen(rd());
+                const float MARGIN = CELL_SIZE;
+                std::uniform_real_distribution<float> xDist(MARGIN, MAP_SIZE - MARGIN);
+                std::uniform_real_distribution<float> yDist(MARGIN, MAP_SIZE - MARGIN);
+                
+                const int MAX_ATTEMPTS = 100;
+                bool foundValidSpawn = false;
+                
+                for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
+                    Position newSpawn;
+                    newSpawn.x = xDist(gen);
+                    newSpawn.y = yDist(gen);
                     
-                    // Respawn at original spawn position
-                    serverPos.x = 250.0f;
-                    serverPos.y = 4850.0f;
-                    serverPosPrevious = serverPos;
+                    // Check if position is valid (no wall collision)
+                    if (checkCollision(sf::Vector2f(newSpawn.x, newSpawn.y), grid)) {
+                        continue;
+                    }
                     
-                    ErrorHandler::logInfo("Server player respawned! Health: 100 HP");
+                    // Check distance from client (must be >= 1000 pixels)
+                    float dx = newSpawn.x - clientPos.x;
+                    float dy = newSpawn.y - clientPos.y;
+                    float distance = std::sqrt(dx * dx + dy * dy);
                     
-                    // TODO: Requirement 9.5: Broadcast respawn event to all clients
+                    if (distance >= 1000.0f) {
+                        serverPos = newSpawn;
+                        serverPosPrevious = newSpawn;
+                        foundValidSpawn = true;
+                        ErrorHandler::logInfo("Server player respawned at (" + std::to_string(serverPos.x) + 
+                                            ", " + std::to_string(serverPos.y) + "), distance from client: " + 
+                                            std::to_string(distance) + " pixels");
+                        break;
+                    }
+                }
+                
+                    if (!foundValidSpawn) {
+                        // Fallback: use original spawn position
+                        serverPos.x = 250.0f;
+                        serverPos.y = 4850.0f;
+                        serverPosPrevious = serverPos;
+                        ErrorHandler::logWarning("Failed to find valid respawn position, using fallback");
+                    }
                 }
             }
             
-            // Handle client respawn after 5 seconds
+            // NEW DEATH SYSTEM: Handle client respawn with 5 second delay
             if (clientWaitingRespawn) {
-                float respawnTime = clientRespawnTimer.getElapsedTime().asSeconds();
-                if (respawnTime >= 5.0f) {
-                    ErrorHandler::logInfo("!!! CLIENT PLAYER RESPAWNING !!! Time: " + std::to_string(respawnTime));
+                // Check if 5 seconds have passed since death
+                if (clientRespawnTimer.getElapsedTime().asSeconds() >= 5.0f) {
+                    // Respawn after 5 second delay
+                    ErrorHandler::logInfo("!!! CLIENT PLAYER RESPAWNING !!!");
                     clientHealth = 100.0f;
                     clientIsAlive = true;
                     clientWaitingRespawn = false;
+                
+                // Generate random respawn position at least 1000 pixels away from server
+                std::random_device rd;
+                std::mt19937 gen(rd());
+                const float MARGIN = CELL_SIZE;
+                std::uniform_real_distribution<float> xDist(MARGIN, MAP_SIZE - MARGIN);
+                std::uniform_real_distribution<float> yDist(MARGIN, MAP_SIZE - MARGIN);
+                
+                const int MAX_ATTEMPTS = 100;
+                bool foundValidSpawn = false;
+                
+                for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
+                    Position newSpawn;
+                    newSpawn.x = xDist(gen);
+                    newSpawn.y = yDist(gen);
                     
-                    // Respawn at original spawn position
-                    clientPos.x = 4850.0f;
-                    clientPos.y = 250.0f;
-                    clientPosPrevious = clientPos;
-                    clientPosTarget = clientPos;
+                    // Check if position is valid (no wall collision)
+                    if (checkCollision(sf::Vector2f(newSpawn.x, newSpawn.y), grid)) {
+                        continue;
+                    }
                     
-                    ErrorHandler::logInfo("Client player respawned! Health: 100 HP");
+                    // Check distance from server (must be >= 1000 pixels)
+                    float dx = newSpawn.x - serverPos.x;
+                    float dy = newSpawn.y - serverPos.y;
+                    float distance = std::sqrt(dx * dx + dy * dy);
                     
-                    // TODO: Send respawn packet to client
+                    if (distance >= 1000.0f) {
+                        clientPos = newSpawn;
+                        clientPosPrevious = newSpawn;
+                        clientPosTarget = newSpawn;
+                        foundValidSpawn = true;
+                        ErrorHandler::logInfo("Client player respawned at (" + std::to_string(clientPos.x) + 
+                                            ", " + std::to_string(clientPos.y) + "), distance from server: " + 
+                                            std::to_string(distance) + " pixels");
+                        break;
+                    }
+                }
+                
+                    if (!foundValidSpawn) {
+                        // Fallback: use original spawn position
+                        clientPos.x = 4850.0f;
+                        clientPos.y = 250.0f;
+                        clientPosPrevious = clientPos;
+                        clientPosTarget = clientPos;
+                        ErrorHandler::logWarning("Failed to find valid respawn position, using fallback");
+                    }
                 }
             }
             
@@ -5309,11 +5383,28 @@ int main() {
             );
             window.draw(inventoryHint);
             
-            // Apply screen darkening effect if server player is dead
+            // NEW DEATH SYSTEM: Black screen with "You dead" text
             if (!serverIsAlive) {
+                // Full black screen
                 sf::RectangleShape deathOverlay(sf::Vector2f(static_cast<float>(windowSize.x), static_cast<float>(windowSize.y)));
-                deathOverlay.setFillColor(sf::Color(0, 0, 0, 180)); // Dark semi-transparent overlay
+                deathOverlay.setFillColor(sf::Color(0, 0, 0, 255)); // Completely black
                 window.draw(deathOverlay);
+                
+                // Red "You dead" text
+                sf::Text deathText;
+                deathText.setFont(font);
+                deathText.setString("You dead");
+                deathText.setCharacterSize(80);
+                deathText.setFillColor(sf::Color::Red);
+                deathText.setStyle(sf::Text::Bold);
+                
+                // Center the text
+                sf::FloatRect textBounds = deathText.getLocalBounds();
+                deathText.setPosition(
+                    static_cast<float>(windowSize.x) / 2.0f - textBounds.width / 2.0f - textBounds.left,
+                    static_cast<float>(windowSize.y) / 2.0f - textBounds.height / 2.0f - textBounds.top
+                );
+                window.draw(deathText);
             }
         }
 

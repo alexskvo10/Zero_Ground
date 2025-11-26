@@ -3925,11 +3925,28 @@ int main() {
             );
             window.draw(inventoryHint);
             
-            // Apply screen darkening effect if player is dead
+            // NEW DEATH SYSTEM: Black screen with "You dead" text
             if (!clientIsAlive) {
+                // Full black screen
                 sf::RectangleShape deathOverlay(sf::Vector2f(windowSize.x, windowSize.y));
-                deathOverlay.setFillColor(sf::Color(0, 0, 0, 180)); // Dark semi-transparent overlay
+                deathOverlay.setFillColor(sf::Color(0, 0, 0, 255)); // Completely black
                 window.draw(deathOverlay);
+                
+                // Red "You dead" text
+                sf::Text deathText;
+                deathText.setFont(font);
+                deathText.setString("You dead");
+                deathText.setCharacterSize(80);
+                deathText.setFillColor(sf::Color::Red);
+                deathText.setStyle(sf::Text::Bold);
+                
+                // Center the text
+                sf::FloatRect textBounds = deathText.getLocalBounds();
+                deathText.setPosition(
+                    windowSize.x / 2.0f - textBounds.width / 2.0f - textBounds.left,
+                    windowSize.y / 2.0f - textBounds.height / 2.0f - textBounds.top
+                );
+                window.draw(deathText);
             }
         }
         else if (state == ClientState::ConnectionLost) {
