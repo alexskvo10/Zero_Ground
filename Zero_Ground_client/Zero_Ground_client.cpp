@@ -20,7 +20,7 @@ sf::Image g_windowIcon;
 const float MAP_SIZE = 5100.0f;
 const float CELL_SIZE = 100.0f;
 const int GRID_SIZE = 51;  // 5100 / 100 = 51
-const float PLAYER_SIZE = 20.0f;  // Diameter (radius = 10px)
+const float PLAYER_SIZE = 30.0f;  // Texture size 30x30 pixels (radius = 15px)
 const float WALL_WIDTH = 12.0f;
 const float WALL_LENGTH = 100.0f;
 
@@ -3519,8 +3519,28 @@ int main() {
             // Requirements: 2.6, 3.1, 10.5
             renderShops(window, renderPos, shops);
             
-            // Draw server player (green circle) with fog of war
-            if (isServerConnected) {
+            // Load player texture (once)
+            static sf::Texture playerTexture;
+            static sf::Sprite serverSprite;
+            static sf::Sprite clientSprite;
+            static bool textureLoaded = false;
+            
+            if (!textureLoaded) {
+                if (!playerTexture.loadFromFile("Nothing_1.png")) {
+                    std::cerr << "Failed to load player texture Nothing_1.png!" << std::endl;
+                } else {
+                    serverSprite.setTexture(playerTexture);
+                    serverSprite.setOrigin(PLAYER_SIZE / 2.0f, PLAYER_SIZE / 2.0f);
+                    
+                    clientSprite.setTexture(playerTexture);
+                    clientSprite.setOrigin(PLAYER_SIZE / 2.0f, PLAYER_SIZE / 2.0f);
+                    
+                    textureLoaded = true;
+                }
+            }
+            
+            // Draw server player sprite with fog of war
+            if (isServerConnected && textureLoaded) {
                 // Calculate distance from client to server player
                 float dx = currentServerPos.x - clientPos.x;
                 float dy = currentServerPos.y - clientPos.y;
@@ -3531,21 +3551,10 @@ int main() {
                 
                 // Only draw if visible
                 if (alpha > 0) {
-                    sf::CircleShape serverCircle(PLAYER_SIZE / 2.0f);
-                    
-                    // Apply fog to server player color
-                    sf::Color foggedColor(0, 200, 0, alpha);
-                    serverCircle.setFillColor(foggedColor);
-                    
-                    sf::Color foggedOutline(0, 100, 0, alpha);
-                    serverCircle.setOutlineColor(foggedOutline);
-                    serverCircle.setOutlineThickness(2.0f);
-                    
-                    serverCircle.setPosition(
-                        currentServerPos.x - PLAYER_SIZE / 2.0f,
-                        currentServerPos.y - PLAYER_SIZE / 2.0f
-                    );
-                    window.draw(serverCircle);
+                    // Apply fog to server player sprite
+                    serverSprite.setColor(sf::Color(255, 255, 255, alpha));
+                    serverSprite.setPosition(currentServerPos.x, currentServerPos.y);
+                    window.draw(serverSprite);
                 }
             }
             
@@ -3622,13 +3631,11 @@ int main() {
                 }
             }
             
-            // Draw local client player as blue circle - always visible
-            clientCircle.setRadius(PLAYER_SIZE / 2.0f);
-            clientCircle.setFillColor(sf::Color::Blue);
-            clientCircle.setOutlineColor(sf::Color(0, 0, 100));
-            clientCircle.setOutlineThickness(3.0f);
-            clientCircle.setPosition(renderPos.x - PLAYER_SIZE / 2.0f, renderPos.y - PLAYER_SIZE / 2.0f);
-            window.draw(clientCircle);
+            // Draw local client player sprite - always visible
+            if (textureLoaded) {
+                clientSprite.setPosition(renderPos.x, renderPos.y);
+                window.draw(clientSprite);
+            }
             
             // Render fog overlay on top of everything (creates vignette effect)
             renderFogOverlay(window, renderPos);

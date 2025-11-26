@@ -355,7 +355,7 @@ void initializePlayer(Player& player) {
 const float MAP_SIZE = 5100.0f;
 const float CELL_SIZE = 100.0f;
 const int GRID_SIZE = 51;  // 5100 / 100 = 51
-const float PLAYER_SIZE = 20.0f;  // Diameter (radius = 10px)
+const float PLAYER_SIZE = 30.0f;  // Texture size 30x30 pixels (radius = 15px)
 const float WALL_WIDTH = 12.0f;
 const float WALL_LENGTH = 100.0f;
 
@@ -4084,14 +4084,20 @@ int main() {
     playButtonText.setCharacterSize(32);
     playButtonText.setFillColor(sf::Color::White);
 
-    // �������� ��������� ������
-    sf::CircleShape serverCircle(PLAYER_SIZE / 2.0f);
-    serverCircle.setFillColor(sf::Color::Green);
-    serverCircle.setOutlineColor(sf::Color(0, 100, 0));
-    serverCircle.setOutlineThickness(3.0f);
-    serverCircle.setPosition(serverPos.x - PLAYER_SIZE / 2.0f, serverPos.y - PLAYER_SIZE / 2.0f);
+    // Load player texture
+    sf::Texture playerTexture;
+    if (!playerTexture.loadFromFile("Nothing_1.png")) {
+        std::cerr << "Failed to load player texture Nothing_1.png!" << std::endl;
+        return -1;
+    }
+    
+    // Create server player sprite
+    sf::Sprite serverSprite;
+    serverSprite.setTexture(playerTexture);
+    serverSprite.setOrigin(PLAYER_SIZE / 2.0f, PLAYER_SIZE / 2.0f); // Center origin
+    serverSprite.setPosition(serverPos.x, serverPos.y);
 
-    std::map<sf::IpAddress, sf::CircleShape> clientCircles;
+    std::map<sf::IpAddress, sf::Sprite> clientSprites;
     
     // Clock for delta time calculation
     sf::Clock deltaClock;
@@ -4468,7 +4474,7 @@ int main() {
                 }
                 
                 // Requirement 7.4: Check bullet-player collisions
-                const float PLAYER_RADIUS = 20.0f; // PLAYER_SIZE / 2
+                const float PLAYER_RADIUS = 15.0f; // PLAYER_SIZE / 2 (30 / 2 = 15)
                 
                 // Debug: Log bullet count
                 static sf::Clock bulletLogClock;
@@ -4951,11 +4957,10 @@ int main() {
                 for (auto& pair : clients) {
                     sf::IpAddress ip = pair.first;
 
-                    if (clientCircles.find(ip) == clientCircles.end()) {
-                        clientCircles[ip] = sf::CircleShape(PLAYER_SIZE / 2.0f);
-                        clientCircles[ip].setFillColor(sf::Color::Blue);
-                        clientCircles[ip].setOutlineColor(sf::Color(0, 0, 100));
-                        clientCircles[ip].setOutlineThickness(2.0f);
+                    if (clientSprites.find(ip) == clientSprites.end()) {
+                        clientSprites[ip] = sf::Sprite();
+                        clientSprites[ip].setTexture(playerTexture);
+                        clientSprites[ip].setOrigin(PLAYER_SIZE / 2.0f, PLAYER_SIZE / 2.0f);
                     }
 
                     // Use interpolated position for smooth movement
@@ -4971,23 +4976,14 @@ int main() {
                     
                     // Only draw if visible
                     if (alpha > 0) {
-                        // Apply fog to client player color
-                        sf::Color foggedColor = sf::Color::Blue;
-                        foggedColor.a = alpha;
-                        clientCircles[ip].setFillColor(foggedColor);
+                        // Apply fog to client player sprite
+                        clientSprites[ip].setColor(sf::Color(255, 255, 255, alpha));
                         
-                        sf::Color foggedOutline = sf::Color(0, 0, 100);
-                        foggedOutline.a = alpha;
-                        clientCircles[ip].setOutlineColor(foggedOutline);
-                        
-                        // Position client circle (centered on position)
-                        clientCircles[ip].setPosition(
-                            renderClientPos.x - PLAYER_SIZE / 2.0f,
-                            renderClientPos.y - PLAYER_SIZE / 2.0f
-                        );
+                        // Position client sprite (centered on position)
+                        clientSprites[ip].setPosition(renderClientPos.x, renderClientPos.y);
                         
                         // Draw client player
-                        window.draw(clientCircles[ip]);
+                        window.draw(clientSprites[ip]);
                     }
                 }
             }
@@ -5065,10 +5061,9 @@ int main() {
                 }
             }
             
-            // Draw server player as green circle - always visible
-            serverCircle.setRadius(PLAYER_SIZE / 2.0f);
-            serverCircle.setPosition(renderPos.x - PLAYER_SIZE / 2.0f, renderPos.y - PLAYER_SIZE / 2.0f);
-            window.draw(serverCircle);
+            // Draw server player sprite - always visible
+            serverSprite.setPosition(renderPos.x, renderPos.y);
+            window.draw(serverSprite);
             
             // Render fog overlay on top of everything (creates vignette effect)
             renderFogOverlay(window, renderPos);
