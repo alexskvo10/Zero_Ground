@@ -156,6 +156,48 @@ struct Player {
 };
 
 // ========================
+// Ammo System Data Structures
+// ========================
+
+enum class AmmoType : uint8_t {
+    AMMO_9x18 = 0,    // Pistol ammo
+    AMMO_5_45x39 = 1, // Rifle ammo
+    AMMO_7_62x54 = 2  // Sniper ammo
+};
+
+struct AmmoItem {
+    AmmoType type;
+    std::string name;
+    int price;
+    int quantity;
+    
+    static AmmoItem* create(AmmoType type) {
+        AmmoItem* ammo = new AmmoItem();
+        ammo->type = type;
+        
+        switch (type) {
+            case AmmoType::AMMO_9x18:
+                ammo->name = "Bullets 9x18";
+                ammo->price = 100;
+                ammo->quantity = 10;
+                break;
+            case AmmoType::AMMO_5_45x39:
+                ammo->name = "Bullets 5,45x39";
+                ammo->price = 150;
+                ammo->quantity = 30;
+                break;
+            case AmmoType::AMMO_7_62x54:
+                ammo->name = "Bullets 7,62x54";
+                ammo->price = 200;
+                ammo->quantity = 5;
+                break;
+        }
+        
+        return ammo;
+    }
+};
+
+// ========================
 // Weapon System Data Structures
 // ========================
 
@@ -165,6 +207,17 @@ struct Weapon {
         GALIL = 4, M4 = 5, AK47 = 6,                     // Rifles
         M10 = 7, AWP = 8, M40 = 9                        // Snipers
     };
+    
+    // Get ammo type for this weapon
+    AmmoType getAmmoType() const {
+        if (type == USP || type == GLOCK || type == FIVESEVEN || type == R8) {
+            return AmmoType::AMMO_9x18;  // Pistols use 9x18
+        } else if (type == GALIL || type == M4 || type == AK47) {
+            return AmmoType::AMMO_5_45x39;  // Rifles use 5.45x39
+        } else {
+            return AmmoType::AMMO_7_62x54;  // Snipers use 7.62x54
+        }
+    }
     
     Type type;
     std::string name;
@@ -2335,6 +2388,57 @@ bool processPurchase(Player& player, Weapon::Type weaponType) {
     return true;
 }
 
+// Process ammo purchase request
+// Returns: true if purchase successful, false otherwise
+bool processAmmoPurchase(Player& player, AmmoType ammoType) {
+    // Create ammo item to get price and quantity
+    AmmoItem* ammo = AmmoItem::create(ammoType);
+    
+    // Validate player has sufficient money
+    if (player.money < ammo->price) {
+        std::cout << "[AMMO PURCHASE] Player has insufficient funds: " 
+                  << player.money << " < " << ammo->price << std::endl;
+        delete ammo;
+        return false;
+    }
+    
+    // Find weapons that use this ammo type
+    bool hasCompatibleWeapon = false;
+    for (int i = 0; i < 4; i++) {
+        if (player.inventory[i] != nullptr) {
+            if (player.inventory[i]->getAmmoType() == ammoType) {
+                hasCompatibleWeapon = true;
+                break;
+            }
+        }
+    }
+    
+    if (!hasCompatibleWeapon) {
+        std::cout << "[AMMO PURCHASE] Player has no weapon for " << ammo->name << std::endl;
+        delete ammo;
+        return false;
+    }
+    
+    // Deduct ammo price from player money
+    player.money -= ammo->price;
+    
+    // Add ammo to all weapons of matching type
+    for (int i = 0; i < 4; i++) {
+        if (player.inventory[i] != nullptr) {
+            if (player.inventory[i]->getAmmoType() == ammoType) {
+                player.inventory[i]->reserveAmmo += ammo->quantity;
+            }
+        }
+    }
+    
+    std::cout << "[AMMO PURCHASE] Player purchased " << ammo->name 
+              << " (" << ammo->quantity << " rounds) for $" << ammo->price 
+              << ". New balance: $" << player.money << std::endl;
+    
+    delete ammo;
+    return true;
+}
+
 // Check if player is near any shop and render interaction prompt
 // Requirement 3.1: Display prompt when player within 60 pixels
 void renderShopInteractionPrompt(sf::RenderWindow& window, sf::Vector2f playerPosition, 
@@ -2483,13 +2587,13 @@ void renderWeaponTooltip(sf::RenderWindow& window, const Weapon* weapon, float m
     }
 }
 
-// Render shop UI with three columns
+// Render shop UI with four columns (three for weapons, one for ammo)
 // Requirements: 3.2, 3.3, 3.4, 3.5
 void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font& font, float animationProgress) {
     sf::Vector2u windowSize = window.getSize();
     
-    // Shop UI dimensions
-    const float UI_WIDTH = 1000.0f;
+    // Shop UI dimensions - increased width for 4 columns
+    const float UI_WIDTH = 1300.0f;
     const float UI_HEIGHT = 700.0f;
     const float UI_X = (windowSize.x - UI_WIDTH) / 2.0f;
     const float UI_Y = (windowSize.y - UI_HEIGHT) / 2.0f;
@@ -2542,14 +2646,14 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
     moneyText.setPosition(scaledX + 20.0f * scale, scaledY + 70.0f * scale);
     window.draw(moneyText);
     
-    // Column dimensions
-    const float COLUMN_WIDTH = (scaledWidth - 80.0f * scale) / 3.0f;
+    // Column dimensions - now 4 columns
+    const float COLUMN_WIDTH = (scaledWidth - 100.0f * scale) / 4.0f;
     const float COLUMN_HEIGHT = scaledHeight - 150.0f * scale;
     const float COLUMN_Y = scaledY + 120.0f * scale;
     const float COLUMN_PADDING = 20.0f * scale;
     
     // Define weapon categories
-    // Requirement 3.3: Three categories
+    // Requirement 3.3: Three weapon categories + one ammo category
     struct WeaponCategory {
         std::string name;
         std::vector<Weapon::Type> weapons;
@@ -2559,6 +2663,13 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
         {"Pistols", {Weapon::USP, Weapon::GLOCK, Weapon::FIVESEVEN, Weapon::R8}},
         {"Rifles", {Weapon::GALIL, Weapon::M4, Weapon::AK47}},
         {"Snipers", {Weapon::M10, Weapon::AWP, Weapon::M40}}
+    };
+    
+    // Define ammo types
+    std::vector<AmmoType> ammoTypes = {
+        AmmoType::AMMO_9x18,
+        AmmoType::AMMO_5_45x39,
+        AmmoType::AMMO_7_62x54
     };
     
     // Variables to store hovered weapon for tooltip rendering at the end
@@ -2688,6 +2799,118 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
             }
             
             weaponY += WEAPON_HEIGHT + WEAPON_PADDING;
+        }
+    }
+    
+    // Draw ammo column (4th column)
+    {
+        float columnX = scaledX + 20.0f * scale + 3 * (COLUMN_WIDTH + COLUMN_PADDING);
+        
+        // Draw column background
+        sf::RectangleShape columnBg(sf::Vector2f(COLUMN_WIDTH, COLUMN_HEIGHT));
+        columnBg.setPosition(columnX, COLUMN_Y);
+        columnBg.setFillColor(sf::Color(30, 30, 30, alpha));
+        columnBg.setOutlineColor(sf::Color(80, 80, 80, static_cast<sf::Uint8>(easedProgress * 255)));
+        columnBg.setOutlineThickness(2.0f);
+        window.draw(columnBg);
+        
+        // Draw column title
+        sf::Text columnTitle;
+        columnTitle.setFont(font);
+        columnTitle.setString("Ammo");
+        columnTitle.setCharacterSize(static_cast<unsigned int>(26 * scale));
+        columnTitle.setFillColor(sf::Color(255, 200, 100, static_cast<sf::Uint8>(easedProgress * 255)));
+        sf::FloatRect columnTitleBounds = columnTitle.getLocalBounds();
+        columnTitle.setPosition(
+            columnX + (COLUMN_WIDTH - columnTitleBounds.width) / 2.0f - columnTitleBounds.left,
+            COLUMN_Y + 10.0f * scale
+        );
+        window.draw(columnTitle);
+        
+        // Draw ammo items
+        float ammoY = COLUMN_Y + 50.0f * scale;
+        const float AMMO_HEIGHT = 110.0f * scale;
+        const float AMMO_PADDING = 10.0f * scale;
+        
+        for (AmmoType ammoType : ammoTypes) {
+            // Create ammo item to get stats
+            AmmoItem* ammo = AmmoItem::create(ammoType);
+            
+            // Check if player has weapon for this ammo type
+            bool hasCompatibleWeapon = false;
+            for (int i = 0; i < 4; i++) {
+                if (player.inventory[i] != nullptr) {
+                    if (player.inventory[i]->getAmmoType() == ammoType) {
+                        hasCompatibleWeapon = true;
+                        break;
+                    }
+                }
+            }
+            
+            // Check if player has enough money
+            bool canAfford = player.money >= ammo->price;
+            
+            // Draw ammo panel
+            sf::RectangleShape ammoPanel(sf::Vector2f(COLUMN_WIDTH - 20.0f * scale, AMMO_HEIGHT));
+            ammoPanel.setPosition(columnX + 10.0f * scale, ammoY);
+            
+            // Color based on purchase status
+            if (hasCompatibleWeapon && canAfford) {
+                ammoPanel.setFillColor(sf::Color(50, 70, 50, alpha));  // Green tint
+                ammoPanel.setOutlineColor(sf::Color(100, 200, 100, static_cast<sf::Uint8>(easedProgress * 255)));
+            } else {
+                ammoPanel.setFillColor(sf::Color(50, 50, 50, alpha));  // Gray
+                ammoPanel.setOutlineColor(sf::Color(100, 100, 100, static_cast<sf::Uint8>(easedProgress * 255)));
+            }
+            ammoPanel.setOutlineThickness(1.0f);
+            window.draw(ammoPanel);
+            
+            // Draw ammo name
+            sf::Text ammoName;
+            ammoName.setFont(font);
+            ammoName.setString(ammo->name);
+            ammoName.setCharacterSize(static_cast<unsigned int>(18 * scale));
+            ammoName.setFillColor(sf::Color(255, 255, 255, static_cast<sf::Uint8>(easedProgress * 255)));
+            ammoName.setPosition(columnX + 15.0f * scale, ammoY + 5.0f * scale);
+            window.draw(ammoName);
+            
+            // Draw ammo price
+            sf::Text ammoPrice;
+            ammoPrice.setFont(font);
+            ammoPrice.setString("$" + std::to_string(ammo->price));
+            ammoPrice.setCharacterSize(static_cast<unsigned int>(18 * scale));
+            ammoPrice.setFillColor(sf::Color(255, 215, 0, static_cast<sf::Uint8>(easedProgress * 255)));
+            ammoPrice.setPosition(columnX + 15.0f * scale, ammoY + 28.0f * scale);
+            window.draw(ammoPrice);
+            
+            // Draw ammo quantity
+            sf::Text ammoQuantity;
+            ammoQuantity.setFont(font);
+            ammoQuantity.setString("Quantity: " + std::to_string(ammo->quantity));
+            ammoQuantity.setCharacterSize(static_cast<unsigned int>(16 * scale));
+            ammoQuantity.setFillColor(sf::Color(200, 200, 200, static_cast<sf::Uint8>(easedProgress * 255)));
+            ammoQuantity.setPosition(columnX + 15.0f * scale, ammoY + 50.0f * scale);
+            window.draw(ammoQuantity);
+            
+            // Draw purchase status
+            sf::Text statusText;
+            statusText.setFont(font);
+            if (!hasCompatibleWeapon) {
+                statusText.setString("No compatible weapon");
+                statusText.setFillColor(sf::Color(255, 100, 100, static_cast<sf::Uint8>(easedProgress * 255)));
+            } else if (!canAfford) {
+                statusText.setString("Insufficient funds");
+                statusText.setFillColor(sf::Color(255, 100, 100, static_cast<sf::Uint8>(easedProgress * 255)));
+            } else {
+                statusText.setString("Can purchase");
+                statusText.setFillColor(sf::Color(100, 255, 100, static_cast<sf::Uint8>(easedProgress * 255)));
+            }
+            statusText.setCharacterSize(static_cast<unsigned int>(14 * scale));
+            statusText.setPosition(columnX + 15.0f * scale, ammoY + 75.0f * scale);
+            window.draw(statusText);
+            
+            delete ammo;
+            ammoY += AMMO_HEIGHT + AMMO_PADDING;
         }
     }
     
@@ -2969,7 +3192,7 @@ int main() {
                 sf::Vector2u windowSize = window.getSize();
                 
                 // Shop UI dimensions (same as in renderShopUI)
-                const float UI_WIDTH = 1000.0f;
+                const float UI_WIDTH = 1300.0f;
                 const float UI_HEIGHT = 700.0f;
                 const float UI_X = (windowSize.x - UI_WIDTH) / 2.0f;
                 const float UI_Y = (windowSize.y - UI_HEIGHT) / 2.0f;
@@ -2982,8 +3205,8 @@ int main() {
                 float scaledX = UI_X + (UI_WIDTH - scaledWidth) / 2.0f;
                 float scaledY = UI_Y + (UI_HEIGHT - scaledHeight) / 2.0f;
                 
-                // Column dimensions
-                const float COLUMN_WIDTH = (scaledWidth - 80.0f * scale) / 3.0f;
+                // Column dimensions - now 4 columns
+                const float COLUMN_WIDTH = (scaledWidth - 100.0f * scale) / 4.0f;
                 const float COLUMN_HEIGHT = scaledHeight - 150.0f * scale;
                 const float COLUMN_Y = scaledY + 120.0f * scale;
                 const float COLUMN_PADDING = 20.0f * scale;
@@ -3049,6 +3272,74 @@ int main() {
                         }
                         
                         weaponY += WEAPON_HEIGHT + WEAPON_PADDING;
+                    }
+                }
+                
+                // Check ammo column for click (4th column)
+                {
+                    float columnX = scaledX + 20.0f * scale + 3 * (COLUMN_WIDTH + COLUMN_PADDING);
+                    float ammoY = COLUMN_Y + 50.0f * scale;
+                    const float AMMO_HEIGHT = 110.0f * scale;
+                    const float AMMO_PADDING = 10.0f * scale;
+                    
+                    std::vector<AmmoType> ammoTypes = {
+                        AmmoType::AMMO_9x18,
+                        AmmoType::AMMO_5_45x39,
+                        AmmoType::AMMO_7_62x54
+                    };
+                    
+                    for (AmmoType ammoType : ammoTypes) {
+                        // Check if click is within ammo panel bounds
+                        sf::FloatRect ammoBounds(
+                            columnX + 10.0f * scale,
+                            ammoY,
+                            COLUMN_WIDTH - 20.0f * scale,
+                            AMMO_HEIGHT
+                        );
+                        
+                        if (ammoBounds.contains(static_cast<float>(mousePixelPos.x), static_cast<float>(mousePixelPos.y))) {
+                            // Ammo clicked! Attempt purchase
+                            AmmoItem* ammo = AmmoItem::create(ammoType);
+                            
+                            // Check if player has compatible weapon
+                            bool hasCompatibleWeapon = false;
+                            for (int i = 0; i < 4; i++) {
+                                if (clientPlayer.inventory[i] != nullptr) {
+                                    if (clientPlayer.inventory[i]->getAmmoType() == ammoType) {
+                                        hasCompatibleWeapon = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            if (hasCompatibleWeapon && clientPlayer.money >= ammo->price) {
+                                // Process ammo purchase
+                                bool success = processAmmoPurchase(clientPlayer, ammoType);
+                                
+                                if (success) {
+                                    ErrorHandler::logInfo("Client player purchased " + ammo->name);
+                                    
+                                    // Create purchase notification text
+                                    {
+                                        std::lock_guard<std::mutex> lock(purchaseTextsMutex);
+                                        PurchaseText purchaseText;
+                                        purchaseText.x = columnX + COLUMN_WIDTH / 2.0f;
+                                        purchaseText.y = ammoY + AMMO_HEIGHT / 2.0f;
+                                        purchaseText.weaponName = ammo->name;
+                                        purchaseTexts.push_back(purchaseText);
+                                    }
+                                }
+                            } else if (!hasCompatibleWeapon) {
+                                ErrorHandler::logInfo("Cannot purchase " + ammo->name + ": No compatible weapon");
+                            } else {
+                                ErrorHandler::logInfo("Cannot purchase " + ammo->name + ": Insufficient funds (need $" + std::to_string(ammo->price) + ")");
+                            }
+                            
+                            delete ammo;
+                            break;
+                        }
+                        
+                        ammoY += AMMO_HEIGHT + AMMO_PADDING;
                     }
                 }
             }
