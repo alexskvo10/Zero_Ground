@@ -51,6 +51,7 @@ struct Player {
     float y = 0.0f;
     float previousX = 0.0f;
     float previousY = 0.0f;
+    float rotation = 0.0f;  // Player rotation angle in degrees (0-360)
     float health = 100.0f;
     int score = 0;
     bool isAlive = true;
@@ -1407,6 +1408,7 @@ struct MapDataPacket {
 struct PositionPacket {
     float x = 0.0f;
     float y = 0.0f;
+    float rotation = 0.0f;  // Player rotation angle in degrees
     float health = 100.0f;
     bool isAlive = true;
     uint32_t frameID = 0;
@@ -3346,6 +3348,9 @@ GameState gameState; // Thread-safe game state manager
 // Server player with inventory and weapons
 Player serverPlayer;
 
+// Client player (for tracking opponent state)
+Player clientPlayer;
+
 // Shop system
 std::vector<Shop> shops;
 
@@ -3747,6 +3752,9 @@ void udpListenerThread(sf::UdpSocket* socket, PerformanceMonitor* perfMonitor) {
                         clientPosTarget.x = receivedPacket->x;
                         clientPosTarget.y = receivedPacket->y;
                         
+                        // Update client player rotation
+                        clientPlayer.rotation = receivedPacket->rotation;
+                        
                         // Also update legacy clients map for backward compatibility
                         Position pos;
                         pos.x = receivedPacket->x;
@@ -3828,6 +3836,7 @@ void udpListenerThread(sf::UdpSocket* socket, PerformanceMonitor* perfMonitor) {
                 PositionPacket serverPacket;
                 serverPacket.x = serverPos.x;
                 serverPacket.y = serverPos.y;
+                serverPacket.rotation = serverPlayer.rotation;  // Send server player rotation
                 serverPacket.health = serverHealth;
                 serverPacket.isAlive = serverIsAlive;
                 serverPacket.frameID = static_cast<uint32_t>(std::time(nullptr));
@@ -3846,6 +3855,7 @@ void udpListenerThread(sf::UdpSocket* socket, PerformanceMonitor* perfMonitor) {
                 PositionPacket clientPacket;
                 clientPacket.x = clientPos.x;
                 clientPacket.y = clientPos.y;
+                clientPacket.rotation = clientPlayer.rotation;  // Send client player rotation
                 clientPacket.health = clientHealth;
                 clientPacket.isAlive = clientIsAlive;
                 clientPacket.frameID = static_cast<uint32_t>(std::time(nullptr));
@@ -4989,6 +4999,9 @@ int main() {
                         // Position client sprite (centered on position)
                         clientSprites[ip].setPosition(renderClientPos.x, renderClientPos.y);
                         
+                        // Apply client player rotation (subtract 90 degrees because sprite initially faces up)
+                        clientSprites[ip].setRotation(clientPlayer.rotation - 90.0f);
+                        
                         // Draw client player
                         window.draw(clientSprites[ip]);
                     }
@@ -5087,6 +5100,12 @@ int main() {
             float dx = mouseWorldPos.x - renderPos.x;
             float dy = mouseWorldPos.y - renderPos.y;
             float angleToMouse = std::atan2(dy, dx) * 180.0f / 3.14159f;
+            
+            // Update server player rotation for synchronization
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                serverPlayer.rotation = angleToMouse;
+            }
             
             // Rotate sprite to face mouse (subtract 90 degrees because sprite initially faces up)
             serverSprite.setRotation(angleToMouse - 90.0f);

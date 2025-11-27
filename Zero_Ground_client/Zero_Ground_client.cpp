@@ -97,6 +97,7 @@ struct Player {
     float y = 0.0f;
     float previousX = 0.0f;
     float previousY = 0.0f;
+    float rotation = 0.0f;  // Player rotation angle in degrees (0-360)
     float health = 100.0f;
     int score = 0;
     bool isAlive = true;
@@ -778,6 +779,7 @@ struct MapDataPacket {
 struct PositionPacket {
     float x = 0.0f;
     float y = 0.0f;
+    float rotation = 0.0f;  // Player rotation angle in degrees
     float health = 100.0f;
     bool isAlive = true;
     uint32_t frameID = 0;
@@ -1619,6 +1621,9 @@ std::mutex purchaseTextsMutex;
 // Client player with inventory and weapons
 Player clientPlayer;
 
+// Server player (for rendering opponent)
+Player serverPlayer;
+
 // Inventory system
 const int INVENTORY_SLOTS = 6;
 const float INVENTORY_SLOT_SIZE = 100.0f;
@@ -1965,6 +1970,7 @@ void udpThread(std::unique_ptr<sf::UdpSocket> socket, const std::string& ip) {
                 std::lock_guard<std::mutex> lock(mutex);
                 outPacket.x = clientPos.x;
                 outPacket.y = clientPos.y;
+                outPacket.rotation = clientPlayer.rotation;  // Send player rotation
                 outPacket.isAlive = true;
                 outPacket.frameID = currentFrameID++;
                 outPacket.playerId = 1; // Client is player 1, server is player 0
@@ -2005,6 +2011,9 @@ void udpThread(std::unique_ptr<sf::UdpSocket> socket, const std::string& ip) {
                             // Update target position (latest received)
                             serverPosTarget.x = inPacket->x;
                             serverPosTarget.y = inPacket->y;
+                            
+                            // Update server player rotation
+                            serverPlayer.rotation = inPacket->rotation;
                             
                             // Update server health
                             float previousServerHealth = serverHealth;
@@ -3557,6 +3566,8 @@ int main() {
                     // Apply fog to server player sprite
                     serverSprite.setColor(sf::Color(255, 255, 255, alpha));
                     serverSprite.setPosition(currentServerPos.x, currentServerPos.y);
+                    // Apply server player rotation (subtract 90 degrees because sprite initially faces up)
+                    serverSprite.setRotation(serverPlayer.rotation - 90.0f);
                     window.draw(serverSprite);
                 }
             }
@@ -3656,6 +3667,12 @@ int main() {
                 float dx = mouseWorldPos.x - renderPos.x;
                 float dy = mouseWorldPos.y - renderPos.y;
                 float angleToMouse = std::atan2(dy, dx) * 180.0f / 3.14159f;
+                
+                // Update player rotation for synchronization
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    clientPlayer.rotation = angleToMouse;
+                }
                 
                 // Rotate sprite to face mouse (subtract 90 degrees because sprite initially faces up)
                 clientSprite.setRotation(angleToMouse - 90.0f);
