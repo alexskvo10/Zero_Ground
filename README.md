@@ -35,7 +35,7 @@ Zero Ground is a multiplayer 2D top-down shooter built with C++ and SFML 2.6.1. 
 - **BFS Connectivity Validation**: Ensures all spawn points are reachable before game starts
 - **Dynamic Camera System**: Smooth camera following with optimized viewport culling
 - **Fog of War**: Limited visibility system for strategic gameplay
-- **Weapon Shop System**: Purchase weapons with detailed tooltips showing full stats
+- **Weapon Shop System**: Purchase weapons and ammo with detailed tooltips showing full stats and compatibility
 - **Optimized Performance**: Cell-based spatial partitioning for efficient collision detection and rendering
 - **Real-time Monitoring**: Comprehensive performance metrics and profiling
 
@@ -438,8 +438,11 @@ On the server:
 
 **Weapon Shop:**
 - Hover mouse over any weapon to see detailed stats tooltip
+- Hover mouse over any ammo to see price, quantity, and compatible weapons
 - Click on weapon to purchase (if you have enough money and inventory space)
-- Tooltip shows: damage, magazine size, reserve ammo, range, bullet speed, reload time, movement speed, fire mode
+- Click on ammo to purchase (if you have compatible weapon and enough money)
+- Weapon tooltip shows: damage, magazine size, reserve ammo, range, bullet speed, reload time, movement speed, fire mode
+- Ammo tooltip shows: price, quantity per purchase, list of compatible weapons
 
 ### Troubleshooting
 
@@ -556,6 +559,12 @@ If you'd like to contribute to addressing these limitations:
 - `WEAPON_TOOLTIP_VISUAL_GUIDE.txt` - Visual design reference
 - `ПОДСКАЗКИ_ОРУЖИЯ.md` - User guide in Russian
 - `CHANGELOG_WEAPON_TOOLTIP.md` - Tooltip feature changelog
+- `AMMO_TOOLTIP_FEATURE.md` - Ammo tooltip system documentation
+- `AMMO_TOOLTIP_TESTING.md` - Ammo tooltip testing guide
+- `AMMO_TOOLTIP_VISUAL_GUIDE.txt` - Ammo tooltip visual design reference
+- `ПОДСКАЗКИ_ПАТРОНОВ.md` - Ammo tooltip user guide in Russian
+- `CHANGELOG_AMMO_TOOLTIP.md` - Ammo tooltip feature changelog
+- `QUICK_START_AMMO_TOOLTIP.txt` - Quick start guide for ammo tooltips
 
 ### Specifications
 - `.kiro/specs/zero-ground-multiplayer-shooter/` - Complete specification documents

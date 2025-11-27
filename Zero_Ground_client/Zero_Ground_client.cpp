@@ -2498,6 +2498,112 @@ void renderShopInteractionPrompt(sf::RenderWindow& window, sf::Vector2f playerPo
 // Shop UI Rendering System
 // ========================
 
+// Render ammo tooltip with full information
+void renderAmmoTooltip(sf::RenderWindow& window, const AmmoItem* ammo, float mouseX, float mouseY, const sf::Font& font) {
+    sf::Vector2u windowSize = window.getSize();
+    
+    // Tooltip dimensions
+    const float TOOLTIP_WIDTH = 320.0f;
+    const float TOOLTIP_HEIGHT = 220.0f;
+    const float PADDING = 15.0f;
+    
+    // Position tooltip near mouse, but keep it on screen
+    const float BOTTOM_UI_RESERVE = 150.0f;
+    
+    float tooltipX = mouseX + 20.0f;
+    float tooltipY = mouseY + 20.0f;
+    
+    // Adjust if tooltip goes off screen
+    if (tooltipX + TOOLTIP_WIDTH > windowSize.x - 10.0f) {
+        tooltipX = mouseX - TOOLTIP_WIDTH - 20.0f;
+    }
+    if (tooltipY + TOOLTIP_HEIGHT > windowSize.y - BOTTOM_UI_RESERVE) {
+        tooltipY = mouseY - TOOLTIP_HEIGHT - 20.0f;
+    }
+    if (tooltipX < 10.0f) tooltipX = 10.0f;
+    if (tooltipY < 10.0f) tooltipY = 10.0f;
+    
+    // Draw tooltip background
+    sf::RectangleShape tooltipBg(sf::Vector2f(TOOLTIP_WIDTH, TOOLTIP_HEIGHT));
+    tooltipBg.setPosition(tooltipX, tooltipY);
+    tooltipBg.setFillColor(sf::Color(20, 20, 20, 240));
+    tooltipBg.setOutlineColor(sf::Color(255, 215, 0));  // Gold border
+    tooltipBg.setOutlineThickness(2.0f);
+    window.draw(tooltipBg);
+    
+    float textY = tooltipY + PADDING;
+    
+    // Ammo name (title)
+    sf::Text nameText;
+    nameText.setFont(font);
+    nameText.setString(ammo->name);
+    nameText.setCharacterSize(24);
+    nameText.setFillColor(sf::Color(255, 215, 0));  // Gold
+    nameText.setStyle(sf::Text::Bold);
+    nameText.setPosition(tooltipX + PADDING, textY);
+    window.draw(nameText);
+    textY += 35.0f;
+    
+    // Price
+    sf::Text priceText;
+    priceText.setFont(font);
+    priceText.setString("Price: $" + std::to_string(ammo->price));
+    priceText.setCharacterSize(20);
+    priceText.setFillColor(sf::Color(100, 255, 100));  // Light green
+    priceText.setPosition(tooltipX + PADDING, textY);
+    window.draw(priceText);
+    textY += 30.0f;
+    
+    // Separator line
+    sf::RectangleShape separator(sf::Vector2f(TOOLTIP_WIDTH - 2 * PADDING, 1.0f));
+    separator.setPosition(tooltipX + PADDING, textY);
+    separator.setFillColor(sf::Color(100, 100, 100));
+    window.draw(separator);
+    textY += 10.0f;
+    
+    // Quantity per purchase
+    sf::Text quantityText;
+    quantityText.setFont(font);
+    quantityText.setString("Quantity: " + std::to_string(ammo->quantity) + " bullets");
+    quantityText.setCharacterSize(18);
+    quantityText.setFillColor(sf::Color::White);
+    quantityText.setPosition(tooltipX + PADDING, textY);
+    window.draw(quantityText);
+    textY += 30.0f;
+    
+    // Compatible weapons section
+    sf::Text compatibleLabel;
+    compatibleLabel.setFont(font);
+    compatibleLabel.setString("Compatible with:");
+    compatibleLabel.setCharacterSize(18);
+    compatibleLabel.setFillColor(sf::Color(200, 200, 200));
+    compatibleLabel.setPosition(tooltipX + PADDING, textY);
+    window.draw(compatibleLabel);
+    textY += 25.0f;
+    
+    // List compatible weapon types
+    std::string weaponList;
+    switch (ammo->type) {
+        case AmmoType::AMMO_9x18:
+            weaponList = "-> Pistols:\n  USP, Glock-18,\n  Five-SeveN, R8 Revolver";
+            break;
+        case AmmoType::AMMO_5_45x39:
+            weaponList = "-> Rifles:\n  Galil AR, M4, AK-47";
+            break;
+        case AmmoType::AMMO_7_62x54:
+            weaponList = "-> Sniper Rifles:\n  M10, AWP, M40";
+            break;
+    }
+    
+    sf::Text weaponListText;
+    weaponListText.setFont(font);
+    weaponListText.setString(weaponList);
+    weaponListText.setCharacterSize(16);
+    weaponListText.setFillColor(sf::Color(150, 200, 255));  // Light blue
+    weaponListText.setPosition(tooltipX + PADDING, textY);
+    window.draw(weaponListText);
+}
+
 // Render weapon tooltip with full stats
 void renderWeaponTooltip(sf::RenderWindow& window, const Weapon* weapon, float mouseX, float mouseY, const sf::Font& font) {
     sf::Vector2u windowSize = window.getSize();
@@ -2687,6 +2793,7 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
     
     // Variables to store hovered weapon for tooltip rendering at the end
     Weapon* hoveredWeapon = nullptr;
+    AmmoItem* hoveredAmmo = nullptr;
     float hoveredMouseX = 0.0f;
     float hoveredMouseY = 0.0f;
     
@@ -2922,15 +3029,43 @@ void renderShopUI(sf::RenderWindow& window, const Player& player, const sf::Font
             statusText.setPosition(columnX + 15.0f * scale, ammoY + 75.0f * scale);
             window.draw(statusText);
             
-            delete ammo;
+            // Check if mouse is hovering over this ammo slot
+            sf::Vector2i mousePixelPos = sf::Mouse::getPosition(window);
+            sf::FloatRect ammoBounds(
+                columnX + 10.0f * scale,
+                ammoY,
+                COLUMN_WIDTH - 20.0f * scale,
+                AMMO_HEIGHT
+            );
+            
+            // If hovering, store ammo for tooltip rendering at the end
+            if (ammoBounds.contains(static_cast<float>(mousePixelPos.x), static_cast<float>(mousePixelPos.y))) {
+                // Delete previous hovered ammo if exists
+                if (hoveredAmmo != nullptr) {
+                    delete hoveredAmmo;
+                }
+                // Store this ammo for tooltip (don't delete it yet)
+                hoveredAmmo = ammo;
+                hoveredMouseX = static_cast<float>(mousePixelPos.x);
+                hoveredMouseY = static_cast<float>(mousePixelPos.y);
+            } else {
+                // Not hovering, delete ammo as usual
+                delete ammo;
+            }
+            
             ammoY += AMMO_HEIGHT + AMMO_PADDING;
         }
     }
     
-    // Render tooltip at the very end to ensure it's on top of all other UI elements
+    // Render tooltips at the very end to ensure they're on top of all other UI elements
     if (hoveredWeapon != nullptr) {
         renderWeaponTooltip(window, hoveredWeapon, hoveredMouseX, hoveredMouseY, font);
         delete hoveredWeapon;  // Clean up after rendering
+    }
+    
+    if (hoveredAmmo != nullptr) {
+        renderAmmoTooltip(window, hoveredAmmo, hoveredMouseX, hoveredMouseY, font);
+        delete hoveredAmmo;  // Clean up after rendering
     }
 }
 
