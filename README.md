@@ -30,10 +30,13 @@ The ground that never forgets.
 Zero Ground is a multiplayer 2D top-down shooter built with C++ and SFML 2.6.1. The game features:
 
 - **Client-Server Architecture**: Authoritative server with UDP position synchronization
-- **Dynamic Map Generation**: Procedurally generated maps with BFS connectivity validation
+- **Dynamic Map Generation**: Procedurally generated 5000×5000 pixel maps with cell-based wall system
+- **Cell-Based Wall System**: 167×167 grid of 30-pixel cells with probabilistic wall generation
+- **BFS Connectivity Validation**: Ensures all spawn points are reachable before game starts
+- **Dynamic Camera System**: Smooth camera following with optimized viewport culling
 - **Fog of War**: Limited visibility system for strategic gameplay
 - **Weapon Shop System**: Purchase weapons with detailed tooltips showing full stats
-- **Optimized Performance**: Quadtree spatial partitioning for efficient collision detection
+- **Optimized Performance**: Cell-based spatial partitioning for efficient collision detection and rendering
 - **Real-time Monitoring**: Comprehensive performance metrics and profiling
 
 ## Performance
@@ -176,17 +179,35 @@ See `tests/PERFORMANCE_TESTING_GUIDE.md` for detailed procedures.
 
 ### Key Algorithms
 
-**Quadtree Spatial Partitioning:**
-- Divides 500x500 map into hierarchical quadrants
-- Maximum 10 walls per node, maximum depth of 5
-- Reduces collision checks from O(n) to O(log n)
-- Typical performance: 3-5 wall checks instead of 20
+**Cell-Based Map System:**
+- Map size: 5000×5000 pixels divided into 167×167 cells (30 pixels each)
+- Each cell can have 0-2 walls on its borders (top, right, bottom, left)
+- Wall dimensions: 12 pixels wide × 30 pixels long
+- Probabilistic generation: 60% chance for 1 wall, 25% for 2 walls, 15% for 0 walls
+- Only cells where (i+j) % 2 == 1 can have walls (checkerboard pattern)
+- Performance: < 100ms generation time, < 1ms BFS validation
 
-**BFS Map Validation:**
-- Divides map into 50x50 grid (10 units per cell)
-- Validates path exists between spawn points
+**Dynamic Camera System:**
+- Camera follows player position smoothly
+- Viewport clamped to map boundaries [0, 5000]
+- Optimized rendering: only draws walls within 21×21 cell radius around player
+- Cached visible cell boundaries (recalculated only when player changes cells)
+- Typical rendering: 400-500 walls instead of 10,000+ total walls
+- Performance: 60+ FPS maintained with dynamic camera
+
+**BFS Connectivity Validation:**
+- Validates path exists between spawn points (250, 4750) and (4750, 250)
+- Checks wall barriers between adjacent cells
 - Guarantees map connectivity before game starts
+- Maximum 10 generation attempts with fallback
 - Performance: < 1ms for typical maps
+
+**Cell-Based Collision Detection:**
+- Player collision checks only walls in 3×3 cell radius
+- Walls centered on cell borders for accurate collision
+- Circle-rectangle collision with 1-pixel pushback
+- Boundary enforcement: player kept within [PLAYER_SIZE/2, MAP_SIZE - PLAYER_SIZE/2]
+- Performance: O(1) constant time per frame
 
 **Circle-Rectangle Collision:**
 - Finds closest point on rectangle to circle center

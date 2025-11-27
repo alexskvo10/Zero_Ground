@@ -64,9 +64,9 @@ struct Player {
     int money = 50000;    // Starting money
     
     // Shared ammo pools for each weapon type
-    int pistolAmmo = 100;   // Shared ammo for all pistols
-    int rifleAmmo = 0;      // Shared ammo for all rifles
-    int sniperAmmo = 0;     // Shared ammo for all snipers
+    int pistolAmmo = 60;   // Shared ammo for all pistols
+    int rifleAmmo = 90;      // Shared ammo for all rifles
+    int sniperAmmo = 20;     // Shared ammo for all snipers
     
     float getInterpolatedX(float alpha) const {
         return previousX + (x - previousX) * alpha;
@@ -183,7 +183,6 @@ struct Weapon {
     int price;
     int magazineSize;
     int currentAmmo;
-    int reserveAmmo;
     float damage;
     float range;              // Effective range in pixels
     float bulletSpeed;        // Pixels per second
@@ -194,13 +193,23 @@ struct Weapon {
     bool isReloading;
     sf::Clock reloadClock;
     
+    // Get pointer to player's ammo pool for this weapon type
+    int* getAmmoPool(Player* player) {
+        AmmoType ammoType = getAmmoType();
+        switch (ammoType) {
+            case AmmoType::AMMO_9x18: return &player->pistolAmmo;
+            case AmmoType::AMMO_5_45x39: return &player->rifleAmmo;
+            case AmmoType::AMMO_7_62x54: return &player->sniperAmmo;
+        }
+        return nullptr;
+    }
+    
     // Factory method to create weapons with proper stats
     static Weapon* create(Type type) {
         Weapon* w = new Weapon();
         w->type = type;
         w->isReloading = false;
         w->currentAmmo = 0;  // Will be set below
-        w->reserveAmmo = 0;  // Will be set below
         
         switch (type) {
             case USP:
@@ -212,7 +221,6 @@ struct Weapon {
                 w->bulletSpeed = 600.0f;
                 w->reloadTime = 2.0f;
                 w->movementSpeed = 2.5f;
-                w->reserveAmmo = 100;
                 w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case GLOCK:
@@ -224,7 +232,6 @@ struct Weapon {
                 w->bulletSpeed = 600.0f;
                 w->reloadTime = 2.0f;
                 w->movementSpeed = 2.5f;
-                w->reserveAmmo = 120;
                 w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case FIVESEVEN:
@@ -236,7 +243,6 @@ struct Weapon {
                 w->bulletSpeed = 800.0f;
                 w->reloadTime = 2.0f;
                 w->movementSpeed = 2.5f;
-                w->reserveAmmo = 100;
                 w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case R8:
@@ -248,7 +254,6 @@ struct Weapon {
                 w->bulletSpeed = 700.0f;
                 w->reloadTime = 5.0f;
                 w->movementSpeed = 2.5f;
-                w->reserveAmmo = 40;
                 w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case GALIL:
@@ -260,7 +265,6 @@ struct Weapon {
                 w->bulletSpeed = 900.0f;
                 w->reloadTime = 3.0f;
                 w->movementSpeed = 2.0f;
-                w->reserveAmmo = 140;
                 w->fireRate = 10.0f;  // 10 выстрелов в секунду
                 break;
             case M4:
@@ -272,7 +276,6 @@ struct Weapon {
                 w->bulletSpeed = 850.0f;
                 w->reloadTime = 3.0f;
                 w->movementSpeed = 1.8f;
-                w->reserveAmmo = 120;
                 w->fireRate = 10.0f;  // 10 выстрелов в секунду
                 break;
             case AK47:
@@ -284,7 +287,6 @@ struct Weapon {
                 w->bulletSpeed = 900.0f;
                 w->reloadTime = 3.0f;
                 w->movementSpeed = 1.6f;
-                w->reserveAmmo = 100;
                 w->fireRate = 10.0f;  // 10 выстрелов в секунду
                 break;
             case M10:
@@ -296,7 +298,6 @@ struct Weapon {
                 w->bulletSpeed = 2000.0f;
                 w->reloadTime = 4.0f;
                 w->movementSpeed = 1.1f;
-                w->reserveAmmo = 25;
                 w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case AWP:
@@ -308,7 +309,6 @@ struct Weapon {
                 w->bulletSpeed = 2000.0f;
                 w->reloadTime = 1.5f;
                 w->movementSpeed = 1.0f;
-                w->reserveAmmo = 10;
                 w->fireRate = 0.0f;  // Не автоматическое
                 break;
             case M40:
@@ -320,7 +320,6 @@ struct Weapon {
                 w->bulletSpeed = 4000.0f;
                 w->reloadTime = 1.5f;
                 w->movementSpeed = 1.2f;
-                w->reserveAmmo = 10;
                 w->fireRate = 0.0f;  // Не автоматическое
                 break;
         }
@@ -346,20 +345,24 @@ struct Weapon {
         return timeSinceLastShot >= fireInterval;
     }
     
-    void startReload() {
-        if (reserveAmmo > 0 && currentAmmo < magazineSize) {
+    void startReload(Player* player) {
+        int* ammoPool = getAmmoPool(player);
+        if (ammoPool && *ammoPool > 0 && currentAmmo < magazineSize) {
             isReloading = true;
             reloadClock.restart();
         }
     }
     
-    void updateReload(float deltaTime) {
+    void updateReload(Player* player) {
         if (isReloading && reloadClock.getElapsedTime().asSeconds() >= reloadTime) {
-            // Transfer ammo from reserve to magazine
-            int ammoNeeded = magazineSize - currentAmmo;
-            int ammoToTransfer = std::min(ammoNeeded, reserveAmmo);
-            currentAmmo += ammoToTransfer;
-            reserveAmmo -= ammoToTransfer;
+            int* ammoPool = getAmmoPool(player);
+            if (ammoPool) {
+                // Transfer ammo from shared pool to magazine
+                int ammoNeeded = magazineSize - currentAmmo;
+                int ammoToTransfer = std::min(ammoNeeded, *ammoPool);
+                currentAmmo += ammoToTransfer;
+                *ammoPool -= ammoToTransfer;
+            }
             isReloading = false;
         }
     }
@@ -2278,13 +2281,17 @@ bool processAmmoPurchase(Player& player, AmmoType ammoType) {
     // Deduct ammo price from player money
     player.money -= ammo->price;
     
-    // Add ammo to all weapons of matching type
-    for (int i = 0; i < 4; i++) {
-        if (player.inventory[i] != nullptr) {
-            if (player.inventory[i]->getAmmoType() == ammoType) {
-                player.inventory[i]->reserveAmmo += ammo->quantity;
-            }
-        }
+    // Add ammo to shared pool based on ammo type
+    switch (ammoType) {
+        case AmmoType::AMMO_9x18:
+            player.pistolAmmo += ammo->quantity;
+            break;
+        case AmmoType::AMMO_5_45x39:
+            player.rifleAmmo += ammo->quantity;
+            break;
+        case AmmoType::AMMO_7_62x54:
+            player.sniperAmmo += ammo->quantity;
+            break;
     }
     
     std::cout << "[AMMO PURCHASE] Player " << player.id << " purchased " << ammo->name 
@@ -2372,7 +2379,6 @@ void renderWeaponTooltip(sf::RenderWindow& window, const Weapon* weapon, float m
     std::vector<std::pair<std::string, std::string>> stats = {
         {"Damage:", std::to_string(static_cast<int>(weapon->damage))},
         {"Magazine:", std::to_string(weapon->magazineSize)},
-        {"Reserve Ammo:", std::to_string(weapon->reserveAmmo)},
         {"Range:", std::to_string(static_cast<int>(weapon->range)) + " px"},
         {"Bullet Speed:", std::to_string(static_cast<int>(weapon->bulletSpeed)) + " px/s"},
         {"Reload Time:", reloadStream.str() + " s"},
@@ -3691,9 +3697,11 @@ void fireWeaponServer(Player& player, const sf::RenderWindow& window, sf::UdpSoc
             }
         }
         
+        int* ammoPool = activeWeapon->getAmmoPool(&player);
+        int reserveAmmo = ammoPool ? *ammoPool : 0;
         ErrorHandler::logInfo("Fired " + activeWeapon->name + " - Ammo: " + 
                              std::to_string(activeWeapon->currentAmmo) + "/" + 
-                             std::to_string(activeWeapon->reserveAmmo));
+                             std::to_string(reserveAmmo));
     }
 }
 
@@ -4200,9 +4208,11 @@ int main() {
     // Debug: Check weapon initialization
     Weapon* usp = serverPlayer.inventory[0];
     if (usp != nullptr) {
+        int* ammoPool = usp->getAmmoPool(&serverPlayer);
+        int reserveAmmo = ammoPool ? *ammoPool : 0;
         std::cout << "Server player initialized with:" << std::endl;
         std::cout << "  Weapon: " << usp->name << std::endl;
-        std::cout << "  Ammo: " << usp->currentAmmo << "/" << usp->reserveAmmo << std::endl;
+        std::cout << "  Ammo: " << usp->currentAmmo << "/" << reserveAmmo << std::endl;
         std::cout << "  Active slot: " << serverPlayer.activeSlot << std::endl;
         std::cout << "  Money: $" << serverPlayer.money << "\n" << std::endl;
     } else {
@@ -4453,7 +4463,7 @@ int main() {
                 if (event.key.code == sf::Keyboard::R) {
                     Weapon* activeWeapon = serverPlayer.getActiveWeapon();
                     if (activeWeapon != nullptr) {
-                        activeWeapon->startReload();
+                        activeWeapon->startReload(&serverPlayer);
                         ErrorHandler::logInfo("Manual reload initiated for " + activeWeapon->name);
                     }
                 }
@@ -4630,8 +4640,10 @@ int main() {
                     fireWeaponServer(serverPlayer, window, udpSocket, activeBullets, bulletsMutex);
                     
                     // Requirement 6.2: Trigger automatic reload when magazine empty
-                    if (activeWeapon->currentAmmo == 0 && activeWeapon->reserveAmmo > 0) {
-                        activeWeapon->startReload();
+                    int* ammoPool = activeWeapon->getAmmoPool(&serverPlayer);
+                    int reserveAmmo = ammoPool ? *ammoPool : 0;
+                    if (activeWeapon->currentAmmo == 0 && reserveAmmo > 0) {
+                        activeWeapon->startReload(&serverPlayer);
                         ErrorHandler::logInfo("Automatic reload triggered for " + activeWeapon->name);
                     }
                 }
@@ -4732,7 +4744,7 @@ int main() {
             // Requirement 6.4, 6.5: Update reload progress
             Weapon* activeWeapon = serverPlayer.getActiveWeapon();
             if (activeWeapon != nullptr) {
-                activeWeapon->updateReload(deltaTime);
+                activeWeapon->updateReload(&serverPlayer);
             }
             
             // Handle automatic fire when LMB is held down
@@ -4747,8 +4759,10 @@ int main() {
                             fireWeaponServer(serverPlayer, window, udpSocket, activeBullets, bulletsMutex);
                             
                             // Trigger automatic reload when magazine empty
-                            if (activeWeapon->currentAmmo == 0 && activeWeapon->reserveAmmo > 0) {
-                                activeWeapon->startReload();
+                            int* ammoPool = activeWeapon->getAmmoPool(&serverPlayer);
+                            int reserveAmmo = ammoPool ? *ammoPool : 0;
+                            if (activeWeapon->currentAmmo == 0 && reserveAmmo > 0) {
+                                activeWeapon->startReload(&serverPlayer);
                                 ErrorHandler::logInfo("Automatic reload triggered for " + activeWeapon->name);
                             }
                         }
@@ -5473,9 +5487,11 @@ int main() {
             Weapon* currentWeapon = serverPlayer.getActiveWeapon();
             if (currentWeapon != nullptr) {
                 // Requirement 5.5: Display weapon name and ammo count
+                int* ammoPool = currentWeapon->getAmmoPool(&serverPlayer);
+                int reserveAmmo = ammoPool ? *ammoPool : 0;
                 std::string weaponInfo = currentWeapon->name + ": " + 
                                         std::to_string(currentWeapon->currentAmmo) + "/" + 
-                                        std::to_string(currentWeapon->reserveAmmo);
+                                        std::to_string(reserveAmmo);
                 weaponText.setString(weaponInfo);
                 weaponText.setFillColor(sf::Color::White);
             } else {
@@ -5656,9 +5672,11 @@ int main() {
                             window.draw(weaponName);
                             
                             // Draw ammo count below weapon name
+                            int* ammoPool = slotWeapon->getAmmoPool(&serverPlayer);
+                            int reserveAmmo = ammoPool ? *ammoPool : 0;
                             sf::Text ammoText;
                             ammoText.setFont(font);
-                            ammoText.setString(std::to_string(slotWeapon->currentAmmo) + "/" + std::to_string(slotWeapon->reserveAmmo));
+                            ammoText.setString(std::to_string(slotWeapon->currentAmmo) + "/" + std::to_string(reserveAmmo));
                             ammoText.setCharacterSize(static_cast<unsigned int>(14 * scale));
                             ammoText.setFillColor(sf::Color(200, 200, 200, static_cast<sf::Uint8>(slotEasedProgress * 255)));
                             
