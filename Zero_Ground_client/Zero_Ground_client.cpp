@@ -69,7 +69,7 @@ sf::Uint8 calculateFogAlpha(float distance) {
     }
 }
 
-enum class ClientState { ConnectScreen, Connected, WaitingForStart, MainScreen, ErrorScreen, ConnectionLost };
+enum class ClientState { MenuScreen, ConnectScreen, Connected, WaitingForStart, MainScreen, ErrorScreen, ConnectionLost };
 
 // ========================
 // Basic Data Structures
@@ -3111,9 +3111,60 @@ int main() {
         return -1;
     }
 
+    // Load menu background texture
+    sf::Texture menuBackgroundTexture;
+    if (!menuBackgroundTexture.loadFromFile("Fon.png")) {
+        std::cerr << "Failed to load menu background Fon.png!" << std::endl;
+        return -1;
+    }
+    sf::Sprite menuBackgroundSprite;
+    menuBackgroundSprite.setTexture(menuBackgroundTexture);
+    
+    // Menu buttons (positioned in bottom-left corner)
+    const float MENU_BUTTON_WIDTH = 300.0f;
+    const float MENU_BUTTON_HEIGHT = 60.0f;
+    const float MENU_BUTTON_PADDING = 20.0f;
+    const float MENU_BUTTON_MARGIN = 50.0f;
+    
+    sf::RectangleShape playButton(sf::Vector2f(MENU_BUTTON_WIDTH, MENU_BUTTON_HEIGHT));
+    playButton.setFillColor(sf::Color(0, 150, 0));
+    
+    sf::RectangleShape developersButton(sf::Vector2f(MENU_BUTTON_WIDTH, MENU_BUTTON_HEIGHT));
+    developersButton.setFillColor(sf::Color(100, 100, 100)); // Gray (disabled)
+    
+    sf::RectangleShape hintsButton(sf::Vector2f(MENU_BUTTON_WIDTH, MENU_BUTTON_HEIGHT));
+    hintsButton.setFillColor(sf::Color(100, 100, 100)); // Gray (disabled)
+    
+    sf::Text playButtonText;
+    playButtonText.setFont(font);
+    playButtonText.setString("Play");
+    playButtonText.setCharacterSize(28);
+    playButtonText.setFillColor(sf::Color::White);
+    
+    sf::Text developersText;
+    developersText.setFont(font);
+    developersText.setString("Developers");
+    developersText.setCharacterSize(28);
+    developersText.setFillColor(sf::Color(150, 150, 150)); // Light gray (disabled)
+    
+    sf::Text hintsText;
+    hintsText.setFont(font);
+    hintsText.setString("Hints");
+    hintsText.setCharacterSize(28);
+    hintsText.setFillColor(sf::Color(150, 150, 150)); // Light gray (disabled)
+    
+    // Load connect screen background texture (same as menu)
+    sf::Texture connectBackgroundTexture;
+    if (!connectBackgroundTexture.loadFromFile("Fon.png")) {
+        std::cerr << "Failed to load connect background Fon.png!" << std::endl;
+        return -1;
+    }
+    sf::Sprite connectBackgroundSprite;
+    connectBackgroundSprite.setTexture(connectBackgroundTexture);
+
     bool isFullscreen = true;
 
-    ClientState state = ClientState::ConnectScreen;
+    ClientState state = ClientState::MenuScreen;
     std::string inputIP = "127.0.0.1";
     bool inputActive = false;
     bool udpThreadStarted = false;
@@ -3226,6 +3277,38 @@ int main() {
     // ������� ��� ������������� ���������
     auto centerElements = [&]() {
         sf::Vector2u windowSize = window.getSize();
+        
+        // Scale menu background to fit window
+        float scaleX = static_cast<float>(windowSize.x) / menuBackgroundTexture.getSize().x;
+        float scaleY = static_cast<float>(windowSize.y) / menuBackgroundTexture.getSize().y;
+        menuBackgroundSprite.setScale(scaleX, scaleY);
+        
+        // Scale connect background to fit window
+        float connectScaleX = static_cast<float>(windowSize.x) / connectBackgroundTexture.getSize().x;
+        float connectScaleY = static_cast<float>(windowSize.y) / connectBackgroundTexture.getSize().y;
+        connectBackgroundSprite.setScale(connectScaleX, connectScaleY);
+        
+        // Position menu buttons in bottom-left corner
+        float buttonX = MENU_BUTTON_MARGIN;
+        float buttonY = windowSize.y - MENU_BUTTON_MARGIN - (MENU_BUTTON_HEIGHT * 3 + MENU_BUTTON_PADDING * 2);
+        
+        playButton.setPosition(buttonX, buttonY);
+        playButtonText.setPosition(
+            buttonX + (MENU_BUTTON_WIDTH - playButtonText.getLocalBounds().width) / 2.0f,
+            buttonY + (MENU_BUTTON_HEIGHT - playButtonText.getLocalBounds().height) / 2.0f - 5.0f
+        );
+        
+        developersButton.setPosition(buttonX, buttonY + MENU_BUTTON_HEIGHT + MENU_BUTTON_PADDING);
+        developersText.setPosition(
+            buttonX + (MENU_BUTTON_WIDTH - developersText.getLocalBounds().width) / 2.0f,
+            buttonY + MENU_BUTTON_HEIGHT + MENU_BUTTON_PADDING + (MENU_BUTTON_HEIGHT - developersText.getLocalBounds().height) / 2.0f - 5.0f
+        );
+        
+        hintsButton.setPosition(buttonX, buttonY + (MENU_BUTTON_HEIGHT + MENU_BUTTON_PADDING) * 2);
+        hintsText.setPosition(
+            buttonX + (MENU_BUTTON_WIDTH - hintsText.getLocalBounds().width) / 2.0f,
+            buttonY + (MENU_BUTTON_HEIGHT + MENU_BUTTON_PADDING) * 2 + (MENU_BUTTON_HEIGHT - hintsText.getLocalBounds().height) / 2.0f - 5.0f
+        );
 
         ipLabel.setPosition(windowSize.x / 2 - ipLabel.getLocalBounds().width / 2,
             windowSize.y / 2 - 150);
@@ -3512,6 +3595,20 @@ int main() {
                 }
             }
 
+            if (state == ClientState::MenuScreen) {
+                // Check if "Play" button is clicked
+                if (event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Left) {
+                    sf::Vector2i mousePos = sf::Mouse::getPosition(window);
+                    sf::FloatRect playButtonBounds = playButton.getGlobalBounds();
+                    
+                    if (playButtonBounds.contains(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y))) {
+                        ErrorHandler::logInfo("=== Play Button Clicked ===");
+                        ErrorHandler::logInfo("Transitioning to connect screen");
+                        state = ClientState::ConnectScreen;
+                    }
+                }
+            }
+            
             if (state == ClientState::ConnectScreen) {
                 // ��������� ����� �� ���� �����
                 if (event.type == sf::Event::MouseButtonPressed) {
@@ -3607,7 +3704,22 @@ int main() {
         // Clear window with black for menu screens, fogged background will be drawn in MainScreen
         window.clear(sf::Color::Black);
 
-        if (state == ClientState::ConnectScreen) {
+        if (state == ClientState::MenuScreen) {
+            // Draw menu background
+            window.draw(menuBackgroundSprite);
+            
+            // Draw menu buttons
+            window.draw(playButton);
+            window.draw(playButtonText);
+            window.draw(developersButton);
+            window.draw(developersText);
+            window.draw(hintsButton);
+            window.draw(hintsText);
+        }
+        else if (state == ClientState::ConnectScreen) {
+            // Draw connect screen background
+            window.draw(connectBackgroundSprite);
+            
             window.draw(ipLabel);
             window.draw(ipField);
             window.draw(ipText);
@@ -3625,6 +3737,9 @@ int main() {
             }
         }
         else if (state == ClientState::ErrorScreen) {
+            // Draw connect screen background
+            window.draw(connectBackgroundSprite);
+            
             window.draw(ipLabel);
             window.draw(ipField);
             window.draw(ipText);
@@ -3637,6 +3752,9 @@ int main() {
             }
         }
         else if (state == ClientState::Connected) {
+            // Draw connect screen background
+            window.draw(connectBackgroundSprite);
+            
             // Display connection success message
             connectionSuccessText.setString(connectionMessage);
             connectionSuccessText.setFillColor(connectionMessageColor);
@@ -3655,6 +3773,9 @@ int main() {
             window.draw(readyText);
         }
         else if (state == ClientState::WaitingForStart) {
+            // Draw connect screen background
+            window.draw(connectBackgroundSprite);
+            
             // Display "Waiting for game start..." message
             sf::Vector2u windowSize = window.getSize();
             waitingStartText.setPosition(
@@ -4445,6 +4566,9 @@ int main() {
             }
         }
         else if (state == ClientState::ConnectionLost) {
+            // Draw connect screen background
+            window.draw(connectBackgroundSprite);
+            
             // Display connection lost screen
             sf::Text connectionLostText;
             connectionLostText.setFont(font);

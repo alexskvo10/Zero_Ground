@@ -17,10 +17,10 @@
 #include <ctime>
 #include <atomic>
 
-enum class ServerState { StartScreen, MainScreen };
+enum class ServerState { MenuScreen, StartScreen, MainScreen };
 
 // Global server state (atomic for thread safety)
-std::atomic<ServerState> serverState(ServerState::StartScreen);
+std::atomic<ServerState> serverState(ServerState::MenuScreen);
 
 // Global icon image (needs to persist for window lifetime)
 sf::Image g_serverWindowIcon;
@@ -4467,6 +4467,48 @@ int main() {
     playButtonText.setCharacterSize(32);
     playButtonText.setFillColor(sf::Color::White);
 
+    // Load menu background texture
+    sf::Texture menuBackgroundTexture;
+    if (!menuBackgroundTexture.loadFromFile("Fon.png")) {
+        std::cerr << "Failed to load menu background Fon.png!" << std::endl;
+        return -1;
+    }
+    sf::Sprite menuBackgroundSprite;
+    menuBackgroundSprite.setTexture(menuBackgroundTexture);
+    
+    // Menu buttons (positioned in bottom-left corner)
+    const float MENU_BUTTON_WIDTH = 300.0f;
+    const float MENU_BUTTON_HEIGHT = 60.0f;
+    const float MENU_BUTTON_PADDING = 20.0f;
+    const float MENU_BUTTON_MARGIN = 50.0f;
+    
+    sf::RectangleShape createServerButton(sf::Vector2f(MENU_BUTTON_WIDTH, MENU_BUTTON_HEIGHT));
+    createServerButton.setFillColor(sf::Color(0, 150, 0));
+    
+    sf::RectangleShape developersButton(sf::Vector2f(MENU_BUTTON_WIDTH, MENU_BUTTON_HEIGHT));
+    developersButton.setFillColor(sf::Color(100, 100, 100)); // Gray (disabled)
+    
+    sf::RectangleShape hintsButton(sf::Vector2f(MENU_BUTTON_WIDTH, MENU_BUTTON_HEIGHT));
+    hintsButton.setFillColor(sf::Color(100, 100, 100)); // Gray (disabled)
+    
+    sf::Text createServerText;
+    createServerText.setFont(font);
+    createServerText.setString("Create Server");
+    createServerText.setCharacterSize(28);
+    createServerText.setFillColor(sf::Color::White);
+    
+    sf::Text developersText;
+    developersText.setFont(font);
+    developersText.setString("Developers");
+    developersText.setCharacterSize(28);
+    developersText.setFillColor(sf::Color(150, 150, 150)); // Light gray (disabled)
+    
+    sf::Text hintsText;
+    hintsText.setFont(font);
+    hintsText.setString("Hints");
+    hintsText.setCharacterSize(28);
+    hintsText.setFillColor(sf::Color(150, 150, 150)); // Light gray (disabled)
+    
     // Load player texture
     sf::Texture playerTexture;
     if (!playerTexture.loadFromFile("Nothing_1.png")) {
@@ -4480,6 +4522,15 @@ int main() {
         std::cerr << "Failed to load bullet texture Bullet.png!" << std::endl;
         return -1;
     }
+    
+    // Load waiting screen background texture (same as menu)
+    sf::Texture waitingBackgroundTexture;
+    if (!waitingBackgroundTexture.loadFromFile("Fon.png")) {
+        std::cerr << "Failed to load waiting background Fon.png!" << std::endl;
+        return -1;
+    }
+    sf::Sprite waitingBackgroundSprite;
+    waitingBackgroundSprite.setTexture(waitingBackgroundTexture);
     
     // Create server player sprite
     sf::Sprite serverSprite;
@@ -4499,6 +4550,38 @@ int main() {
     // Function to center UI elements on window resize
     auto centerElements = [&]() {
         sf::Vector2u winSize = window.getSize();
+        
+        // Scale menu background to fit window
+        float scaleX = static_cast<float>(winSize.x) / menuBackgroundTexture.getSize().x;
+        float scaleY = static_cast<float>(winSize.y) / menuBackgroundTexture.getSize().y;
+        menuBackgroundSprite.setScale(scaleX, scaleY);
+        
+        // Scale waiting background to fit window
+        float waitingScaleX = static_cast<float>(winSize.x) / waitingBackgroundTexture.getSize().x;
+        float waitingScaleY = static_cast<float>(winSize.y) / waitingBackgroundTexture.getSize().y;
+        waitingBackgroundSprite.setScale(waitingScaleX, waitingScaleY);
+        
+        // Position menu buttons in bottom-left corner
+        float buttonX = MENU_BUTTON_MARGIN;
+        float buttonY = winSize.y - MENU_BUTTON_MARGIN - (MENU_BUTTON_HEIGHT * 3 + MENU_BUTTON_PADDING * 2);
+        
+        createServerButton.setPosition(buttonX, buttonY);
+        createServerText.setPosition(
+            buttonX + (MENU_BUTTON_WIDTH - createServerText.getLocalBounds().width) / 2.0f,
+            buttonY + (MENU_BUTTON_HEIGHT - createServerText.getLocalBounds().height) / 2.0f - 5.0f
+        );
+        
+        developersButton.setPosition(buttonX, buttonY + MENU_BUTTON_HEIGHT + MENU_BUTTON_PADDING);
+        developersText.setPosition(
+            buttonX + (MENU_BUTTON_WIDTH - developersText.getLocalBounds().width) / 2.0f,
+            buttonY + MENU_BUTTON_HEIGHT + MENU_BUTTON_PADDING + (MENU_BUTTON_HEIGHT - developersText.getLocalBounds().height) / 2.0f - 5.0f
+        );
+        
+        hintsButton.setPosition(buttonX, buttonY + (MENU_BUTTON_HEIGHT + MENU_BUTTON_PADDING) * 2);
+        hintsText.setPosition(
+            buttonX + (MENU_BUTTON_WIDTH - hintsText.getLocalBounds().width) / 2.0f,
+            buttonY + (MENU_BUTTON_HEIGHT + MENU_BUTTON_PADDING) * 2 + (MENU_BUTTON_HEIGHT - hintsText.getLocalBounds().height) / 2.0f - 5.0f
+        );
 
         // Center "SERVER RUNNING" text
         startText.setPosition(static_cast<float>(winSize.x) / 2.0f - startText.getLocalBounds().width / 2.0f,
@@ -4784,6 +4867,20 @@ int main() {
                 }
             }
 
+            if (serverState.load() == ServerState::MenuScreen) {
+                // Check if "Create Server" button is clicked
+                if (event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Left) {
+                    sf::Vector2i mousePos = sf::Mouse::getPosition(window);
+                    sf::FloatRect createServerBounds = createServerButton.getGlobalBounds();
+                    
+                    if (createServerBounds.contains(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y))) {
+                        ErrorHandler::logInfo("=== Create Server Button Clicked ===");
+                        ErrorHandler::logInfo("Transitioning to waiting screen");
+                        serverState.store(ServerState::StartScreen);
+                    }
+                }
+            }
+            
             if (serverState.load() == ServerState::StartScreen) {
                 // Check if PLAY button is clicked (when player is ready)
                 if (showPlayButton && isButtonClicked(playButton, event, window)) {
@@ -4848,7 +4945,22 @@ int main() {
         // Clear window with black for menu screens, fogged background will be drawn in MainScreen
         window.clear(sf::Color::Black);
 
-        if (serverState.load() == ServerState::StartScreen) {
+        if (serverState.load() == ServerState::MenuScreen) {
+            // Draw menu background
+            window.draw(menuBackgroundSprite);
+            
+            // Draw menu buttons
+            window.draw(createServerButton);
+            window.draw(createServerText);
+            window.draw(developersButton);
+            window.draw(developersText);
+            window.draw(hintsButton);
+            window.draw(hintsText);
+        }
+        else if (serverState.load() == ServerState::StartScreen) {
+            // Draw waiting screen background
+            window.draw(waitingBackgroundSprite);
+            
             // Update status text from global state
             {
                 std::lock_guard<std::mutex> lock(clientsMutex);
