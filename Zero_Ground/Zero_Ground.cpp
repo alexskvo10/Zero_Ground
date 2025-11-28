@@ -4509,6 +4509,11 @@ int main() {
     hintsText.setCharacterSize(28);
     hintsText.setFillColor(sf::Color(150, 150, 150)); // Light gray (disabled)
     
+    // Menu animation variables
+    sf::Clock menuAnimationClock;
+    float menuButtonScale = 1.0f;
+    int hoveredButton = -1; // -1 = none, 0 = create server, 1 = developers, 2 = hints
+    
     // Load player texture
     sf::Texture playerTexture;
     if (!playerTexture.loadFromFile("Nothing_1.png")) {
@@ -4949,13 +4954,91 @@ int main() {
             // Draw menu background
             window.draw(menuBackgroundSprite);
             
-            // Draw menu buttons
-            window.draw(createServerButton);
-            window.draw(createServerText);
-            window.draw(developersButton);
-            window.draw(developersText);
-            window.draw(hintsButton);
-            window.draw(hintsText);
+            // Check hover state for buttons
+            sf::Vector2i mousePos = sf::Mouse::getPosition(window);
+            sf::FloatRect createServerBounds = createServerButton.getGlobalBounds();
+            sf::FloatRect developersBounds = developersButton.getGlobalBounds();
+            sf::FloatRect hintsBounds = hintsButton.getGlobalBounds();
+            
+            int newHoveredButton = -1;
+            if (createServerBounds.contains(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y))) {
+                newHoveredButton = 0;
+            } else if (developersBounds.contains(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y))) {
+                newHoveredButton = 1;
+            } else if (hintsBounds.contains(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y))) {
+                newHoveredButton = 2;
+            }
+            
+            if (newHoveredButton != hoveredButton) {
+                hoveredButton = newHoveredButton;
+                menuAnimationClock.restart();
+            }
+            
+            // Animate button appearance
+            float appearTime = menuAnimationClock.getElapsedTime().asSeconds();
+            float appearAlpha = std::min(1.0f, appearTime / 0.5f);
+            
+            // Draw buttons with hover effect
+            auto drawAnimatedButton = [&](sf::RectangleShape& button, sf::Text& text, int buttonIndex, bool isActive) {
+                sf::Vector2f originalPos = button.getPosition();
+                sf::Vector2f originalSize = button.getSize();
+                
+                // Hover animation
+                float hoverScale = 1.0f;
+                sf::Color buttonColor = button.getFillColor();
+                
+                if (hoveredButton == buttonIndex && isActive) {
+                    float hoverProgress = std::min(1.0f, menuAnimationClock.getElapsedTime().asSeconds() / 0.2f);
+                    hoverScale = 1.0f + hoverProgress * 0.05f; // Scale up by 5%
+                    
+                    // Brighten color on hover
+                    if (isActive) {
+                        buttonColor = sf::Color(
+                            std::min(255, buttonColor.r + static_cast<sf::Uint8>(30 * hoverProgress)),
+                            std::min(255, buttonColor.g + static_cast<sf::Uint8>(30 * hoverProgress)),
+                            std::min(255, buttonColor.b + static_cast<sf::Uint8>(30 * hoverProgress))
+                        );
+                    }
+                }
+                
+                // Apply scale
+                sf::Vector2f scaledSize = originalSize * hoverScale;
+                sf::Vector2f offset = (scaledSize - originalSize) * 0.5f;
+                
+                // Draw shadow
+                sf::RectangleShape shadow(scaledSize);
+                shadow.setPosition(originalPos - offset + sf::Vector2f(4.0f, 4.0f));
+                shadow.setFillColor(sf::Color(0, 0, 0, static_cast<sf::Uint8>(100 * appearAlpha)));
+                window.draw(shadow);
+                
+                // Draw button with outline
+                sf::RectangleShape scaledButton(scaledSize);
+                scaledButton.setPosition(originalPos - offset);
+                scaledButton.setFillColor(sf::Color(
+                    buttonColor.r, buttonColor.g, buttonColor.b,
+                    static_cast<sf::Uint8>(255 * appearAlpha)
+                ));
+                scaledButton.setOutlineThickness(2.0f);
+                scaledButton.setOutlineColor(sf::Color(255, 255, 255, static_cast<sf::Uint8>(150 * appearAlpha)));
+                window.draw(scaledButton);
+                
+                // Draw text
+                sf::Text scaledText = text;
+                sf::FloatRect textBounds = text.getLocalBounds();
+                scaledText.setPosition(
+                    (originalPos.x - offset.x) + (scaledSize.x - textBounds.width) / 2.0f,
+                    (originalPos.y - offset.y) + (scaledSize.y - textBounds.height) / 2.0f - 5.0f
+                );
+                scaledText.setFillColor(sf::Color(
+                    text.getFillColor().r, text.getFillColor().g, text.getFillColor().b,
+                    static_cast<sf::Uint8>(255 * appearAlpha)
+                ));
+                window.draw(scaledText);
+            };
+            
+            drawAnimatedButton(createServerButton, createServerText, 0, true);
+            drawAnimatedButton(developersButton, developersText, 1, false);
+            drawAnimatedButton(hintsButton, hintsText, 2, false);
         }
         else if (serverState.load() == ServerState::StartScreen) {
             // Draw waiting screen background

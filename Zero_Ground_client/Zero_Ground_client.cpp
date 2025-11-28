@@ -1232,7 +1232,7 @@ sf::ConvexShape createRoundedRectangle(sf::Vector2f size, float radius, unsigned
 // NEW: Optimized Fog of War Background Rendering
 // ========================
 
-// Render background with smooth fog of war gradient effect (optimized)
+// Render background with smooth fog of war gradient effect (pixel-based)
 // The background gets darker the further it is from the player
 void renderFoggedBackground(sf::RenderWindow& window, sf::Vector2f playerPosition) {
     // Get current view to determine visible area
@@ -1250,19 +1250,27 @@ void renderFoggedBackground(sf::RenderWindow& window, sf::Vector2f playerPositio
     // Base background color (136, 101, 56)
     const sf::Color baseColor(136, 101, 56);
     
-    // OPTIMIZED: Use larger chunks (50x50) for better performance
-    // This reduces draw calls from ~10000 to ~400 per frame
-    const float chunkSize = 50.0f;
+    // PIXEL-BASED: Use 1x1 pixel quads for smooth fog gradient
+    // Use VertexArray for optimal performance
+    const float pixelSize = 1.0f;
     
-    for (float x = minX; x < maxX; x += chunkSize) {
-        for (float y = minY; y < maxY; y += chunkSize) {
-            // Calculate center of chunk
-            float chunkCenterX = x + chunkSize / 2.0f;
-            float chunkCenterY = y + chunkSize / 2.0f;
+    // Calculate number of pixels
+    int pixelsX = static_cast<int>((maxX - minX) / pixelSize);
+    int pixelsY = static_cast<int>((maxY - minY) / pixelSize);
+    
+    // Create vertex array (4 vertices per pixel quad)
+    sf::VertexArray vertices(sf::Quads, pixelsX * pixelsY * 4);
+    
+    int vertexIndex = 0;
+    for (float x = minX; x < maxX; x += pixelSize) {
+        for (float y = minY; y < maxY; y += pixelSize) {
+            // Calculate center of pixel
+            float pixelCenterX = x + pixelSize / 2.0f;
+            float pixelCenterY = y + pixelSize / 2.0f;
             
-            // Calculate distance from player to chunk center
-            float dx = chunkCenterX - playerPosition.x;
-            float dy = chunkCenterY - playerPosition.y;
+            // Calculate distance from player to pixel center
+            float dx = pixelCenterX - playerPosition.x;
+            float dy = pixelCenterY - playerPosition.y;
             float distance = std::sqrt(dx * dx + dy * dy);
             
             // Calculate fog alpha (smooth gradient)
@@ -1271,20 +1279,32 @@ void renderFoggedBackground(sf::RenderWindow& window, sf::Vector2f playerPositio
             // Apply fog to background color
             sf::Color foggedColor(baseColor.r, baseColor.g, baseColor.b, alpha);
             
-            // Create and draw background rectangle
-            sf::RectangleShape bgRect(sf::Vector2f(chunkSize, chunkSize));
-            bgRect.setPosition(x, y);
-            bgRect.setFillColor(foggedColor);
-            window.draw(bgRect);
+            // Create quad vertices for this pixel
+            vertices[vertexIndex + 0].position = sf::Vector2f(x, y);
+            vertices[vertexIndex + 0].color = foggedColor;
+            
+            vertices[vertexIndex + 1].position = sf::Vector2f(x + pixelSize, y);
+            vertices[vertexIndex + 1].color = foggedColor;
+            
+            vertices[vertexIndex + 2].position = sf::Vector2f(x + pixelSize, y + pixelSize);
+            vertices[vertexIndex + 2].color = foggedColor;
+            
+            vertices[vertexIndex + 3].position = sf::Vector2f(x, y + pixelSize);
+            vertices[vertexIndex + 3].color = foggedColor;
+            
+            vertexIndex += 4;
         }
     }
+    
+    // Draw all pixels in one call
+    window.draw(vertices);
 }
 
 // ========================
 // NEW: Fog Overlay Effect
 // ========================
 
-// Render fog overlay that darkens everything far from player
+// Render fog overlay that darkens everything far from player (pixel-based)
 // This creates a smooth vignette effect
 void renderFogOverlay(sf::RenderWindow& window, sf::Vector2f playerPosition) {
     // Get current view
@@ -1298,18 +1318,26 @@ void renderFogOverlay(sf::RenderWindow& window, sf::Vector2f playerPosition) {
     float minY = viewCenter.y - viewSize.y / 2.0f;
     float maxY = viewCenter.y + viewSize.y / 2.0f;
     
-    // Render fog overlay in larger chunks for smooth gradient
-    const float chunkSize = 100.0f;
+    // PIXEL-BASED: Use 1x1 pixel quads for smooth fog gradient
+    const float pixelSize = 1.0f;
     
-    for (float x = minX; x < maxX; x += chunkSize) {
-        for (float y = minY; y < maxY; y += chunkSize) {
-            // Calculate center of chunk
-            float chunkCenterX = x + chunkSize / 2.0f;
-            float chunkCenterY = y + chunkSize / 2.0f;
+    // Calculate number of pixels
+    int pixelsX = static_cast<int>((maxX - minX) / pixelSize);
+    int pixelsY = static_cast<int>((maxY - minY) / pixelSize);
+    
+    // Create vertex array (4 vertices per pixel quad)
+    sf::VertexArray vertices(sf::Quads, pixelsX * pixelsY * 4);
+    
+    int vertexIndex = 0;
+    for (float x = minX; x < maxX; x += pixelSize) {
+        for (float y = minY; y < maxY; y += pixelSize) {
+            // Calculate center of pixel
+            float pixelCenterX = x + pixelSize / 2.0f;
+            float pixelCenterY = y + pixelSize / 2.0f;
             
             // Calculate distance from player
-            float dx = chunkCenterX - playerPosition.x;
-            float dy = chunkCenterY - playerPosition.y;
+            float dx = pixelCenterX - playerPosition.x;
+            float dy = pixelCenterY - playerPosition.y;
             float distance = std::sqrt(dx * dx + dy * dy);
             
             // Calculate fog darkness (inverse of visibility)
@@ -1319,12 +1347,25 @@ void renderFogOverlay(sf::RenderWindow& window, sf::Vector2f playerPosition) {
             // Apply black fog overlay
             sf::Color fogColor(0, 0, 0, darkness);
             
-            sf::RectangleShape fogRect(sf::Vector2f(chunkSize, chunkSize));
-            fogRect.setPosition(x, y);
-            fogRect.setFillColor(fogColor);
-            window.draw(fogRect);
+            // Create quad vertices for this pixel
+            vertices[vertexIndex + 0].position = sf::Vector2f(x, y);
+            vertices[vertexIndex + 0].color = fogColor;
+            
+            vertices[vertexIndex + 1].position = sf::Vector2f(x + pixelSize, y);
+            vertices[vertexIndex + 1].color = fogColor;
+            
+            vertices[vertexIndex + 2].position = sf::Vector2f(x + pixelSize, y + pixelSize);
+            vertices[vertexIndex + 2].color = fogColor;
+            
+            vertices[vertexIndex + 3].position = sf::Vector2f(x, y + pixelSize);
+            vertices[vertexIndex + 3].color = fogColor;
+            
+            vertexIndex += 4;
         }
     }
+    
+    // Draw all pixels in one call
+    window.draw(vertices);
 }
 
 // ========================
@@ -3153,6 +3194,11 @@ int main() {
     hintsText.setCharacterSize(28);
     hintsText.setFillColor(sf::Color(150, 150, 150)); // Light gray (disabled)
     
+    // Menu animation variables
+    sf::Clock menuAnimationClock;
+    float menuButtonScale = 1.0f;
+    int hoveredButton = -1; // -1 = none, 0 = play, 1 = developers, 2 = hints
+    
     // Load connect screen background texture (same as menu)
     sf::Texture connectBackgroundTexture;
     if (!connectBackgroundTexture.loadFromFile("Fon.png")) {
@@ -3708,13 +3754,91 @@ int main() {
             // Draw menu background
             window.draw(menuBackgroundSprite);
             
-            // Draw menu buttons
-            window.draw(playButton);
-            window.draw(playButtonText);
-            window.draw(developersButton);
-            window.draw(developersText);
-            window.draw(hintsButton);
-            window.draw(hintsText);
+            // Check hover state for buttons
+            sf::Vector2i mousePos = sf::Mouse::getPosition(window);
+            sf::FloatRect playButtonBounds = playButton.getGlobalBounds();
+            sf::FloatRect developersBounds = developersButton.getGlobalBounds();
+            sf::FloatRect hintsBounds = hintsButton.getGlobalBounds();
+            
+            int newHoveredButton = -1;
+            if (playButtonBounds.contains(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y))) {
+                newHoveredButton = 0;
+            } else if (developersBounds.contains(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y))) {
+                newHoveredButton = 1;
+            } else if (hintsBounds.contains(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y))) {
+                newHoveredButton = 2;
+            }
+            
+            if (newHoveredButton != hoveredButton) {
+                hoveredButton = newHoveredButton;
+                menuAnimationClock.restart();
+            }
+            
+            // Animate button appearance
+            float appearTime = menuAnimationClock.getElapsedTime().asSeconds();
+            float appearAlpha = std::min(1.0f, appearTime / 0.5f);
+            
+            // Draw buttons with hover effect
+            auto drawAnimatedButton = [&](sf::RectangleShape& button, sf::Text& text, int buttonIndex, bool isActive) {
+                sf::Vector2f originalPos = button.getPosition();
+                sf::Vector2f originalSize = button.getSize();
+                
+                // Hover animation
+                float hoverScale = 1.0f;
+                sf::Color buttonColor = button.getFillColor();
+                
+                if (hoveredButton == buttonIndex && isActive) {
+                    float hoverProgress = std::min(1.0f, menuAnimationClock.getElapsedTime().asSeconds() / 0.2f);
+                    hoverScale = 1.0f + hoverProgress * 0.05f; // Scale up by 5%
+                    
+                    // Brighten color on hover
+                    if (isActive) {
+                        buttonColor = sf::Color(
+                            std::min(255, buttonColor.r + static_cast<sf::Uint8>(30 * hoverProgress)),
+                            std::min(255, buttonColor.g + static_cast<sf::Uint8>(30 * hoverProgress)),
+                            std::min(255, buttonColor.b + static_cast<sf::Uint8>(30 * hoverProgress))
+                        );
+                    }
+                }
+                
+                // Apply scale
+                sf::Vector2f scaledSize = originalSize * hoverScale;
+                sf::Vector2f offset = (scaledSize - originalSize) * 0.5f;
+                
+                // Draw shadow
+                sf::RectangleShape shadow(scaledSize);
+                shadow.setPosition(originalPos - offset + sf::Vector2f(4.0f, 4.0f));
+                shadow.setFillColor(sf::Color(0, 0, 0, static_cast<sf::Uint8>(100 * appearAlpha)));
+                window.draw(shadow);
+                
+                // Draw button with outline
+                sf::RectangleShape scaledButton(scaledSize);
+                scaledButton.setPosition(originalPos - offset);
+                scaledButton.setFillColor(sf::Color(
+                    buttonColor.r, buttonColor.g, buttonColor.b,
+                    static_cast<sf::Uint8>(255 * appearAlpha)
+                ));
+                scaledButton.setOutlineThickness(2.0f);
+                scaledButton.setOutlineColor(sf::Color(255, 255, 255, static_cast<sf::Uint8>(150 * appearAlpha)));
+                window.draw(scaledButton);
+                
+                // Draw text
+                sf::Text scaledText = text;
+                sf::FloatRect textBounds = text.getLocalBounds();
+                scaledText.setPosition(
+                    (originalPos.x - offset.x) + (scaledSize.x - textBounds.width) / 2.0f,
+                    (originalPos.y - offset.y) + (scaledSize.y - textBounds.height) / 2.0f - 5.0f
+                );
+                scaledText.setFillColor(sf::Color(
+                    text.getFillColor().r, text.getFillColor().g, text.getFillColor().b,
+                    static_cast<sf::Uint8>(255 * appearAlpha)
+                ));
+                window.draw(scaledText);
+            };
+            
+            drawAnimatedButton(playButton, playButtonText, 0, true);
+            drawAnimatedButton(developersButton, developersText, 1, false);
+            drawAnimatedButton(hintsButton, hintsText, 2, false);
         }
         else if (state == ClientState::ConnectScreen) {
             // Draw connect screen background
